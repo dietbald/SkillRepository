@@ -45,7 +45,52 @@ Check if `~/.claude/skills/BrowserControl/sites/<sitename>.md` exists (use lower
 
 ---
 
-## Step 3 — Connect to Chrome
+## Step 3 — Launch or connect to Chrome
+
+### 3a — Check if debug port is already available
+
+```bash
+curl -s http://127.0.0.1:9222/json/version
+```
+
+If this returns JSON, Chrome is already running in debug mode — skip to Step 3c.
+
+### 3b — Chrome is NOT on debug port: ask to kill and relaunch
+
+Check if a regular Chrome instance is running:
+```bash
+# Windows
+tasklist /FI "IMAGENAME eq chrome.exe" /NH
+```
+
+If Chrome IS running, ask the user for confirmation before killing it:
+
+> "Chrome is currently running but not in debug mode. I need to close it and relaunch it with the remote debugging port enabled. This will close all open Chrome windows. **Do you want to proceed? (yes/no)**"
+
+Wait for the user to respond. If **yes**, proceed:
+```bash
+# Kill existing Chrome
+taskkill /F /IM chrome.exe /T
+
+# Wait a moment, then relaunch with debug port
+start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir=C:\ChromeDebug
+```
+
+Wait ~3 seconds for Chrome to start, then verify the debug port is available:
+```bash
+curl -s http://127.0.0.1:9222/json/version
+```
+
+If **no**, stop and inform the user that Chrome must be in debug mode to proceed.
+
+If Chrome is NOT running, launch it directly (no confirmation needed):
+```bash
+start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir=C:\ChromeDebug
+```
+
+After launching Chrome (fresh launch, not reconnecting to an existing debug session), navigate to the target site and wait for the user to log in if needed — use the `ensureLoggedIn` pattern from Step 4.
+
+### 3c — Connect via Puppeteer
 
 ```javascript
 const puppeteer = require('puppeteer-core');
@@ -53,18 +98,16 @@ const browser = await puppeteer.connect({
   browserURL: 'http://127.0.0.1:9222',
   defaultViewport: null   // use actual window size — coordinates align with getBoundingClientRect()
 });
-const pages = await browser.pages();
-const page = pages.find(p => p.url().includes('<site-domain>'));
-if (!page) { console.error('No tab found for <site>'); process.exit(1); }
+
+// Get existing tab or open new one
+let pages = await browser.pages();
+let page = pages.find(p => p.url().includes('<site-domain>'));
+if (!page) {
+  page = pages[0] || await browser.newPage();
+  await page.goto('https://<site-url>', { waitUntil: 'networkidle2' });
+}
 await page.bringToFront();
 ```
-
-Chrome must already be running with:
-```
-chrome.exe --remote-debugging-port=9222 --user-data-dir=C:\ChromeDebug
-```
-
-If the tab is not open, tell the user to open it and log in, then re-run.
 
 ---
 
