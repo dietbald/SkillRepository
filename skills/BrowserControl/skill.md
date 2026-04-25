@@ -149,7 +149,21 @@ await page.evaluate((coords) => {
 await page.mouse.click(x, y);  // real browser mouse event required
 ```
 
+Why `mouse.click()` and not `dispatchEvent` here: `dispatchEvent` fires on the element you target, but does NOT automatically propagate into child elements. Many download buttons are a `<div>` or `<button>` wrapping an inner `<a>` — the `<a>` is what actually handles navigation/tab opening. `mouse.click()` goes through the browser's full hit-testing pipeline and lands on the correct inner element.
+
 **When in doubt:** try `mouse.click()` first. If it does nothing, try `dispatchEvent`.
+
+### "Download PDF" / "Print" buttons that do nothing in Puppeteer
+
+Many portals render a "Download PDF" or "Print" button that triggers a browser print dialog or uses `window.print()`. These **do nothing useful in Puppeteer** — the print dialog never appears and no file is saved.
+
+**Always use `page.pdf()` as the fallback:**
+```javascript
+// Don't rely on the portal's own download button — save the page directly
+await page.pdf({ path: fp, format: 'A4', printBackground: true });
+```
+
+This is confirmed across: Thai Airways, Cebu Pacific (mileage statement), and likely any portal that uses `window.print()` or opens a print preview instead of generating a direct download URL.
 
 ### Finding elements safely
 
@@ -350,6 +364,14 @@ After the session (success or partial), update `sites/<sitename>.md`:
 If new credentials were used during the session, add them to `.env` under the appropriate site section.
 
 If a general technique was discovered that applies to all sites (not just this one), also update `skill.md`.
+
+## Step 7 — Run /reflect to self-improve
+
+**At the end of every BrowserControl session**, run the `/reflect` command.
+
+`/reflect` scans the session for errors, retries, and workarounds, checks whether each is already documented in `skill.md` or the site file, adds anything missing, and commits the update to the SkillRepository.
+
+This is not optional — the skill only improves if every session's learnings are captured. If the user ends the conversation before `/reflect` runs, offer to run it before closing.
 
 ---
 
