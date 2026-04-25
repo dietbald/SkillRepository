@@ -2,42 +2,43 @@
 
 Custom Claude Code skills, shared across machines via git.
 
-## Setup on a new machine
+---
 
-```powershell
-# 1. Clone the repo
-git clone https://github.com/dietbald/SkillRepository.git C:\Repos\SkillRepository
+## Setting up on a new machine
 
-# 2. Link skills — junction so ~/.claude/skills points into the repo
-New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills" -Target "C:\Repos\SkillRepository\skills"
+Just paste this prompt into Claude Code:
 
-# 3. Copy commands into ~/.claude/commands (no junction — commands folder may have others)
-Copy-Item "C:\Repos\SkillRepository\commands\*" "$env:USERPROFILE\.claude\commands\" -Force
+```
+Set up my SkillRepository on this machine. Clone https://github.com/dietbald/SkillRepository.git
+into C:\Repos\SkillRepository (Windows) or ~/Repos/SkillRepository (Linux/macOS), then link
+the skills folder into ~/.claude/skills and copy the commands into ~/.claude/commands.
+After setup, tell me which .env files I need to create manually and what keys go in each.
 ```
 
-> **Linux/macOS:** Use `ln -s ~/Repos/SkillRepository/skills ~/.claude/skills` and
-> `cp ~/Repos/SkillRepository/commands/* ~/.claude/commands/` instead.
-> Note: `gpu-task.md` was written on Windows — review paths and binary locations before use.
+Claude will handle the clone, junction/symlink, and command copy automatically, then tell you exactly what credentials to fill in.
 
-That's it. Claude Code will now load skills from the repo.
+---
 
 ## Daily workflow
 
 ```bash
-# Pull latest skills from another machine
+# Pull updates from another machine
 cd C:\Repos\SkillRepository
 git pull
 
 # After editing a skill — commit and push
-git add skills/
-git commit -m "update BrowserControl: add Stripe site knowledge"
+git add skills/ commands/
+git commit -m "describe what changed"
 git push
 ```
 
-## Credentials (.env files)
+---
 
-Each skill can have a `.env` file for credentials and API keys.  
-`.env` files are in `.gitignore` — **they are never committed**.  
-You must create them manually on each machine.
+## What is NOT synced (set up manually per machine)
 
-Template for `skills/BrowserControl/.env` is in `skills/BrowserControl/sites/_template.md`.
+| Item | Where |
+|---|---|
+| Credentials & API keys | `skills/<SkillName>/.env` — never committed |
+| puppeteer-core | Run `npm install puppeteer-core` inside each project that uses BrowserControl |
+| ChromeDebug profile | Created on first Chrome launch at `C:\ChromeDebug` — log in to each site once |
+| AWS credentials (gpu-task) | `~/.aws/credentials` and `~/gpu-runner/config.env` |
