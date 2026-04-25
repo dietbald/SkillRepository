@@ -58,8 +58,7 @@ If this returns JSON, Chrome is already running in debug mode — skip to Step 3
 ### 3b — Chrome is NOT on debug port: ask to kill and relaunch
 
 Check if a regular Chrome instance is running:
-```bash
-# Windows
+```powershell
 tasklist /FI "IMAGENAME eq chrome.exe" /NH
 ```
 
@@ -67,30 +66,47 @@ If Chrome IS running, ask the user for confirmation before killing it:
 
 > "Chrome is currently running but not in debug mode. I need to close it and relaunch it with the remote debugging port enabled. This will close all open Chrome windows. **Do you want to proceed? (yes/no)**"
 
-Wait for the user to respond. If **yes**, proceed:
-```bash
+Wait for the user to respond. If **yes**, proceed. If **no**, stop — Chrome must be in debug mode to continue.
+
+**On Windows — always use PowerShell to kill and launch Chrome. `start ""` in bash does NOT work reliably.**
+
+```powershell
 # Kill existing Chrome
 taskkill /F /IM chrome.exe /T
+Start-Sleep 2
 
-# Wait a moment, then relaunch with debug port
-start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir=C:\ChromeDebug
+# Relaunch with debug port
+Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--remote-debugging-port=9222","--user-data-dir=C:\ChromeDebug"
+Start-Sleep 4
+
+# Verify
+Invoke-RestMethod http://127.0.0.1:9222/json/version
 ```
 
-Wait ~3 seconds for Chrome to start, then verify the debug port is available:
+If Chrome is NOT running at all, launch directly (no confirmation needed):
+```powershell
+Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--remote-debugging-port=9222","--user-data-dir=C:\ChromeDebug"
+Start-Sleep 4
+Invoke-RestMethod http://127.0.0.1:9222/json/version
+```
+
+**ChromeDebug profile note:** `--user-data-dir=C:\ChromeDebug` is a separate Chrome profile. On first use it is completely fresh — no saved sessions, no cookies. The user must log in manually. After logging in, the session persists for all future runs using the same `--user-data-dir`. Never delete `C:\ChromeDebug` or sessions will be lost.
+
+After launching Chrome fresh, navigate to the target site and wait for login using the `ensureLoggedIn` pattern in Step 4.
+
+### 3c — Check puppeteer-core is installed
+
+Before writing any script, verify puppeteer-core is available in the project directory:
 ```bash
-curl -s http://127.0.0.1:9222/json/version
+node -e "require('puppeteer-core'); console.log('OK')"
 ```
 
-If **no**, stop and inform the user that Chrome must be in debug mode to proceed.
-
-If Chrome is NOT running, launch it directly (no confirmation needed):
+If this fails with `Cannot find module`, install it **locally** (not globally — global installs are not found when running scripts from a project directory):
 ```bash
-start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir=C:\ChromeDebug
+npm install puppeteer-core
 ```
 
-After launching Chrome (fresh launch, not reconnecting to an existing debug session), navigate to the target site and wait for the user to log in if needed — use the `ensureLoggedIn` pattern from Step 4.
-
-### 3c — Connect via Puppeteer
+### 3d — Connect via Puppeteer
 
 ```javascript
 const puppeteer = require('puppeteer-core');
@@ -104,7 +120,7 @@ let pages = await browser.pages();
 let page = pages.find(p => p.url().includes('<site-domain>'));
 if (!page) {
   page = pages[0] || await browser.newPage();
-  await page.goto('https://<site-url>', { waitUntil: 'networkidle2' });
+  await page.goto('https://<site-url>', { waitUntil: 'domcontentloaded', timeout: 30000 });
 }
 await page.bringToFront();
 ```
@@ -159,7 +175,20 @@ for (let y = 100; y < 900; y += 10) {
 
 ### Waiting for navigation
 
+**`waitUntil` strategy — choose carefully:**
+
+| Use | When |
+|---|---|
+| `domcontentloaded` | Default choice. Always safe. Use on pages that may redirect (login, OAuth) — `networkidle2` causes "Execution context was destroyed" errors on redirects |
+| `networkidle2` | Only when you know the page is stable and you need all XHR/fetch to finish (e.g. a dashboard that loads data via API) |
+| `load` | Rarely needed — use only when you specifically need all images/iframes loaded |
+
+**`networkidle2` on a page that redirects = guaranteed crash.** If `page.goto()` throws "Execution context was destroyed", switch to `domcontentloaded`.
+
 ```javascript
+// Safe default
+await page.goto('https://example.com', { waitUntil: 'domcontentloaded', timeout: 30000 });
+
 // Wait for URL change — ALWAYS exclude the source URL
 await page.waitForFunction(
   () => window.location.pathname.includes('/target-path')
@@ -248,19 +277,38 @@ fs.writeFileSync(fp, buf);
 if (fs.existsSync(fp)) { skipped++; continue; }
 ```
 
-### Session expiry — never block on stdin
+### Login detection and session expiry — never block on stdin
 
+Two patterns depending on the site:
+
+**Pattern A — OAuth/redirect-based login** (site redirects to `/login`, `/oauth/login`, `/signin` etc.):
+```javascript
+async function ensureLoggedIn(page, loginUrlFragment = '/login') {
+  const isOnLoginPage = () => page.url().includes(loginUrlFragment);
+  if (!isOnLoginPage()) return;
+  console.log('*** NOT LOGGED IN — please log in in the browser, script will wait ***');
+  for (let t = 0; t < 60; t++) {   // wait up to 5 minutes
+    await sleep(5000);
+    if (!isOnLoginPage()) { console.log('[logged in, resuming]'); return; }
+  }
+  throw new Error('Timed out waiting for login');
+}
+```
+
+**Pattern B — Session expiry modal / page text change** (page stays at same URL but shows logout state):
 ```javascript
 async function ensureLoggedIn(page) {
   for (let t = 0; t < 36; t++) {
     const text = await page.evaluate(() => document.body.innerText).catch(() => '');
-    if (isLoggedIn(text)) return;
+    if (!text.includes('Log in') && text.includes('My Account')) return;
     if (t === 0) console.log('*** SESSION EXPIRED — please log in in the browser ***');
     await sleep(5000);
   }
   throw new Error('Timed out waiting for login');
 }
 ```
+
+Use Pattern A for portals with OAuth (Google, Microsoft SSO, or any `/oauth/` URL in the redirect). Use Pattern B for portals with in-page session modals.
 
 ### Taking a screenshot for debugging
 
