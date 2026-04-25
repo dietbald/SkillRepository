@@ -370,6 +370,72 @@ await page.screenshot({ path: 'debug.png' });
 
 Use screenshots when stuck — inspect the image before taking further action.
 
+### Validate page state before prompting the user
+
+**Always screenshot and read the page state before asking the user to log in or take an action.** Why: a page that's stuck on `400 Bad Request`, an error wall, or the wrong account isn't something the user can solve by typing credentials. Show them what you see, then ask.
+
+```javascript
+await page.screenshot({ path: 'state.png' });
+// Read the screenshot, confirm it's the expected page (login form, dashboard, etc.)
+// Only then print the *** PLEASE LOG IN *** prompt
+```
+
+If the page state is wrong (404, error, wrong account), report what you see and propose the next action — don't block waiting for a login on a non-login page.
+
+### Iframes — `frame.evaluate()`, not `page.evaluate()`
+
+Many enterprise admin portals (Google Workspace billing, payments providers, embedded SaaS dashboards) render their actual content inside an iframe. `page.evaluate()` only sees the outer chrome — selectors return null, clicks land on nothing.
+
+```javascript
+// Find the iframe whose URL matches the inner app
+const frame = page.frames().find(f => f.url().includes('payments.google.com') && f.url().includes('timelineview'));
+if (!frame) throw new Error('inner iframe not loaded yet');
+
+// All DOM ops use frame.* not page.*
+const result = await frame.evaluate(() => document.querySelectorAll('.b3id-collapsing-card').length);
+```
+
+When `page.evaluate(...)` returns `0` or `null` for elements you can clearly see in a screenshot, suspect an iframe. List `page.frames()` and look for one whose URL matches the inner application.
+
+### Filtering out duplicate / hidden DOM nodes
+
+Some portals create a NEW hidden popup each time a menu is opened (the old one stays in the DOM). The same element selector matches both the visible and the stale instances — clicking the wrong one does nothing.
+
+```javascript
+// Find the visible Download action only
+const visibleDl = [...document.querySelectorAll('.menu-action')]
+  .find(el => el.textContent.trim() === 'Download' && el.offsetParent !== null);
+```
+
+`offsetParent !== null` is the cheapest visibility check (also returns false for `display: none` ancestors). Use it whenever a selector matches more than expected — especially for popup menus that accumulate, or for invoice/action links that repeat across multiple tables on the same page.
+
+### When the portal's own download button works only via a "trusted" click
+
+Some portals (Google Workspace, AWS Billing) refuse to serve invoice PDFs to a `fetch(url, {credentials: 'include'})` call from inside `page.evaluate` — the URL returns HTTP 500 or empty body. The same URL works only when Chrome's native download flow handles it (trusted user-gesture click + `expect_download` / Puppeteer's download capture).
+
+```javascript
+// Puppeteer pattern — capture the download via CDP
+const client = await page.target().createCDPSession();
+await client.send('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: SAVE_DIR });
+await page.mouse.click(linkX, linkY);  // trusted click; do NOT use dispatchEvent here
+// The PDF lands in SAVE_DIR — poll for the new file
+```
+
+Symptoms that the trusted-click path is needed:
+- Direct `fetch()` of the URL returns 500 or empty
+- The link element has `onclick` but no `href` (or an `href="#"`)
+- The native browser download "just works" when clicked manually
+
+Pace these portals: Google Workspace rate-limits at ~20 rapid downloads → forces password re-verify. Add ≥ 2 second delay between downloads on any portal whose links are session-tokened.
+
+### File output on Windows — no emoji in stdout
+
+Python's default Windows stdout encoding is `cp1252`, which throws `UnicodeEncodeError` on emoji like ✅ ❌. Use ASCII tags `[OK]` / `[FAIL]` in log lines, or set `PYTHONIOENCODING=utf-8` before running. Same issue applies to Node only when piping to non-UTF-8 consoles, but it's safer to keep log output ASCII.
+
+### Idempotent re-runs handle browser context drops
+
+`TargetClosedError` (Playwright) / `Protocol error: Target closed` (Puppeteer) can fire mid-iteration on long runs — the CDP connection just drops. There's no clean recovery; design every script around `if fs.existsSync(fp) skip` so a re-run picks up where it left off rather than re-downloading everything.
+
 ---
 
 ## Step 5 — File naming convention
