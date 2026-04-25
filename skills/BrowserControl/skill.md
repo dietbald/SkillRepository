@@ -233,7 +233,9 @@ await page.waitForFunction(
 );
 ```
 
-Never use fixed sleeps as a substitute for `waitForFunction`. Use `sleep()` only for brief UI settle delays (500–2000ms).
+Prefer `waitForFunction` over fixed sleeps. Use `sleep()` only for brief UI settle delays (500–2000ms).
+
+**Exception — heavy React/SPA portals:** Some SPAs update the DOM client-side *after* `networkidle2` fires, so `waitForFunction` times out even though content is present. If `waitForFunction` consistently fails on a known-working page, replace it with `sleep(8000)` and document this in the site knowledge file.
 
 ### Loading paginated lists
 
@@ -313,6 +315,18 @@ fs.writeFileSync(fp, buf);
 if (fs.existsSync(fp)) { skipped++; continue; }
 ```
 
+**Cached extraction files — validate before trusting.** If a script caches intermediate results (e.g. `candidates_raw.json`) and an earlier run failed mid-way, the cached file may be empty or incomplete. Before loading from cache, verify it's non-empty:
+```javascript
+if (fs.existsSync(cachePath)) {
+  const data = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+  if (Array.isArray(data) && data.length > 0) {
+    allItems = data;  // safe to use
+  } else {
+    fs.unlinkSync(cachePath);  // delete and re-extract
+  }
+}
+```
+
 ### Login detection and session expiry — never block on stdin
 
 Two patterns depending on the site:
@@ -360,6 +374,29 @@ async function dismissSessionModal(page) {
 }
 ```
 Call `dismissSessionModal()` before `ensureLoggedIn()` on sites known to show blocking expiry modals (e.g. Cebu Pacific). The modal must be dismissed before the login polling can begin.
+
+### Request interception — always use named handlers
+
+**Never use anonymous functions with `page.on('request', ...)`** when interception needs to be enabled/disabled across multiple navigations. Anonymous handlers cannot be removed with `page.off()`, causing "Request Interception is not enabled!" crashes when a stale handler calls `req.continue()` after interception is disabled.
+
+```javascript
+// ❌ Wrong — anonymous handler can't be removed
+await page.setRequestInterception(true);
+page.on('request', req => { /* capture */ req.continue(); });
+await page.goto(url);
+await page.setRequestInterception(false);
+// Later re-enabling interception will crash because the old handler still fires
+
+// ✅ Correct — named handler, explicitly removed
+const handler = req => { /* capture */ req.continue(); };
+await page.setRequestInterception(true);
+page.on('request', handler);
+await page.goto(url);
+page.off('request', handler);   // remove BEFORE disabling
+await page.setRequestInterception(false);
+```
+
+Every `req.continue()` / `req.abort()` / `req.respond()` in a handler is a contract — if the handler fires after interception is disabled, it throws. Named handlers make that contract explicit and removable.
 
 ### Taking a screenshot for debugging
 
