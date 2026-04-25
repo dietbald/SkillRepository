@@ -47,6 +47,14 @@ Check if `~/.claude/skills/BrowserControl/sites/<sitename>.md` exists (use lower
 
 ## Step 3 — Launch or connect to Chrome
 
+> **Platform note:** This skill was originally written for Windows. On
+> **Linux/macOS**, swap PowerShell for bash, `chrome.exe` for `chromium`
+> (or `google-chrome`), `C:\ChromeDebug` for `~/.chromedebug`, and
+> `taskkill` for `pkill`. Linux users on a headless server will also need
+> a virtual display (Xvfb) — see the Linux-equivalent block in 3b. The
+> protocol the AI talks to (`http://127.0.0.1:9222`) is identical on
+> every platform.
+
 ### 3a — Check if debug port is already available
 
 ```bash
@@ -91,6 +99,32 @@ Invoke-RestMethod http://127.0.0.1:9222/json/version
 ```
 
 **ChromeDebug profile note:** `--user-data-dir=C:\ChromeDebug` is a separate Chrome profile. On first use it is completely fresh — no saved sessions, no cookies. The user must log in manually. After logging in, the session persists for all future runs using the same `--user-data-dir`. Never delete `C:\ChromeDebug` or sessions will be lost.
+
+#### Linux equivalent (bash)
+
+```bash
+# Kill any existing Chromium / Chrome
+pkill -f chromium 2>/dev/null
+pkill -f google-chrome 2>/dev/null
+sleep 2
+
+# Launch with debug port — needs a display. Xvfb on :99 is the default
+# pattern on this server. If a real DISPLAY is already set, drop the prefix.
+DISPLAY=:99 nohup chromium \
+  --remote-debugging-port=9222 \
+  --user-data-dir="$HOME/.chromedebug" \
+  --no-sandbox --disable-gpu \
+  </dev/null >/dev/null 2>&1 &
+sleep 4
+
+# Verify
+curl -s http://127.0.0.1:9222/json/version
+```
+
+A wrapper for this is at `~/bin/chromedebug-start` — prefer it over typing
+the launch line by hand. To **see** the browser for first-time logins on a
+headless server, attach a VNC viewer to Xvfb `:99` (`x11vnc -display :99`)
+or use SSH X-forwarding from your laptop.
 
 After launching Chrome fresh, navigate to the target site and wait for login using the `ensureLoggedIn` pattern in Step 4.
 
