@@ -1,0 +1,6 @@
+[submodule "skills/llm-council"]
+	path = skills/llm-council
+	url = https://github.com/tenfoldmarc/llm-council-skill
+[submodule "skills/openclaw-workspace"]
+	path = skills/openclaw-workspace
+	url = https://github.com/win4r/openclaw-workspace

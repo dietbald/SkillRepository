@@ -11,10 +11,20 @@ Offload CPU/GPU-intensive tasks (Whisper transcription, Tesseract OCR, ffmpeg pr
 **CLI:** `~/gpu-runner/gpu-task`
 **Config:** `~/gpu-runner/config.env` — machine-specific settings (instance type, AMI, region, keys); see `.env` for account credentials
 **Current instance type:** c5.2xlarge (8 vCPU, 16GB RAM) — GPU quota pending approval, switch to g4dn.xlarge when approved
+**AMI:** ami-05a42a4837906f0b9 (pre-baked: Whisper, Tesseract, ffmpeg)
 **Region:** ap-southeast-1 (Singapore)
 **Cost:** ~0.17 USD/hr on-demand, ~0.16 USD/hr spot (auto-fallback); free when idle
 
 **Default mode: warm/queue** — instance starts once, all jobs reuse it. Use `--oneoff` to launch fresh per job.
+
+---
+
+## Usage
+
+```bash
+gpu-task <task> [file] [options]
+gpu-task <task> [file] [options] --oneoff   # launch fresh instance, terminate when done
+```
 
 ---
 
