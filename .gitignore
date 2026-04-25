@@ -1,0 +1,6 @@
+# Never commit credentials
+**/.env
+
+# OS noise
+.DS_Store
+Thumbs.db
