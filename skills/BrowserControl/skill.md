@@ -187,6 +187,28 @@ for (let y = 100; y < 900; y += 10) {
 }
 ```
 
+### Stale element references — "Node is either not clickable or not an Element"
+
+This Puppeteer error means an `ElementHandle` was stored before a navigation, then used after — the node no longer exists in the new page's DOM.
+
+**Never store `ElementHandle` objects across navigations.** Always use `page.evaluate()` to extract coordinates as plain numbers, then use `page.mouse.click(x, y)`. Plain numbers survive navigations; element handles do not.
+
+```javascript
+// ❌ Wrong — ElementHandle goes stale after navigation
+const btn = await page.$('button.submit');
+await page.goto('/next');
+await btn.click();  // "Node is either not clickable or not an Element"
+
+// ✅ Correct — extract coords first, click with coordinates
+const coords = await page.evaluate(() => {
+  const el = document.querySelector('button.submit');
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) };
+});
+if (coords) await page.mouse.click(coords.x, coords.y);
+```
+
 ### Waiting for navigation
 
 **`waitUntil` strategy — choose carefully:**
@@ -323,6 +345,21 @@ async function ensureLoggedIn(page) {
 ```
 
 Use Pattern A for portals with OAuth (Google, Microsoft SSO, or any `/oauth/` URL in the redirect). Use Pattern B for portals with in-page session modals.
+
+**Pattern C — Session expiry modal blocking the UI** (a modal appears on top of the page, blocking all interaction before the user can even re-login):
+```javascript
+async function dismissSessionModal(page) {
+  const dismissed = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('button, a')]
+      .find(e => ['Back to home', 'OK', 'Dismiss', 'Close'].includes(e.innerText?.trim()));
+    if (btn) { btn.click(); return true; }
+    return false;
+  });
+  if (dismissed) { console.log('[session modal dismissed]'); await sleep(2000); }
+  return dismissed;
+}
+```
+Call `dismissSessionModal()` before `ensureLoggedIn()` on sites known to show blocking expiry modals (e.g. Cebu Pacific). The modal must be dismissed before the login polling can begin.
 
 ### Taking a screenshot for debugging
 
