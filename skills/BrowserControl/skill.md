@@ -571,6 +571,24 @@ const phrase = await page.evaluate(() => {
 });
 ```
 
+### Running a long Node script in a visible Windows terminal
+
+When a script runs for minutes and the user needs to watch live output, do NOT run it as a background Bash command — the output is hidden. Instead open a persistent PowerShell window:
+
+```powershell
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "node C:\path\to\script.js"
+```
+
+`-NoExit` keeps the window open after the script finishes so the user can read the final summary. The window prints stdout/stderr live as the script runs.
+
+### Killing a running Node process on Windows
+
+```powershell
+Stop-Process -Name "node" -Force
+```
+
+This kills all `node.exe` processes. On Windows, `pkill node` (bash) is unreliable — use `Stop-Process` via PowerShell instead.
+
 ### File output on Windows — no emoji in stdout
 
 Python's default Windows stdout encoding is `cp1252`, which throws `UnicodeEncodeError` on emoji like ✅ ❌. Use ASCII tags `[OK]` / `[FAIL]` in log lines, or set `PYTHONIOENCODING=utf-8` before running. Same issue applies to Node only when piping to non-UTF-8 consoles, but it's safer to keep log output ASCII.
