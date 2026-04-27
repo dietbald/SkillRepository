@@ -343,6 +343,47 @@ if (buf.slice(0, 4).toString() !== '%PDF') throw new Error('Not a PDF');
 fs.writeFileSync(fp, buf);
 ```
 
+### Intercepting PDF binary responses during navigation
+
+Some portals (e.g. SEEK employer portal) serve documents as HTTP binary responses triggered by navigating to a page URL — there's no direct download link. Capture them with `page.on('response')`.
+
+**Register the handler BEFORE `page.goto()`** or the response fires before you attach.
+
+```javascript
+async function downloadViaInterception(page, pageUrl, attachmentHostFragment) {
+  return new Promise(async (resolve) => {
+    let resolved = false;
+    const done = (buf) => {
+      if (!resolved) { resolved = true; page.off('response', handler); resolve(buf); }
+    };
+    const handler = async res => {
+      const ct = res.headers()['content-type'] || '';
+      const u = res.url();
+      // Match all PDF content-type variants — see below
+      const isPdf = ct.includes('application/pdf') || ct.includes('octet-stream');
+      if (isPdf && u.includes(attachmentHostFragment)) {
+        try { done(await res.buffer()); } catch(e) { done(null); }
+      }
+    };
+    page.on('response', handler);
+    try {
+      await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: 45000 });
+    } catch(e) {}
+    await new Promise(r => setTimeout(r, 5000));  // wait for any post-networkidle requests
+    done(null);  // timeout fallback — null means no PDF received
+  });
+}
+```
+
+**Content-type variants** for PDF/binary attachments:
+- `application/pdf` — standard
+- `application/octet-stream` — common for binary downloads
+- `binary/octet-stream` — non-standard variant used by some portals (e.g. SEEK)
+
+Use `ct.includes('octet-stream')` to match all three. Do not check for only `application/pdf`.
+
+**If the PDF doesn't fire immediately after goto**, the page may need UI interaction first (a panel to open, a button to click). Use `waitForFunction` to detect when the content panel opens, then wait for the response to arrive.
+
 ### Skip already-saved files
 
 ```javascript

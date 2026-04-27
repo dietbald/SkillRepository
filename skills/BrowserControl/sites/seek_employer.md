@@ -2,7 +2,7 @@
 <!-- RULE: Never put personal info or credentials here. Names, emails, passwords,
      API keys, account numbers, and PNRs belong in .env only. -->
 
-## Status: ✅ Verified — 2026-04-25, extracted 189 candidates across 3 jobs
+## Status: ✅ Verified — 2026-04-27, extracted 4,097+ candidates across 57 jobs (active + expired)
 
 ## Task
 Extract all applicant profiles (name, email, phone, job title, company, screening questions) + resume PDFs from active job posts on ph.employer.seek.com.
@@ -125,40 +125,111 @@ Each result in `res.data.applications.result[]` contains:
 https://ph.employer.seek.com/candidates?jobid={jobId}&selected={adcentreProspectId}&tab=resume
 ```
 - `selected` = `adcentreProspectId` (NOT `applicationId`, NOT `candidateId`)
-- This renders the candidate's full profile with resume tab active as an HTML page
+- Navigating to this URL opens the portal list view and opens the candidate panel on the right
 
-### Page validation (REQUIRED before saving PDF)
-The page is a React SPA — always validate before calling `page.pdf()`:
+### Download method — response interception (NOT page.pdf())
+
+SEEK serves resume files as binary HTTP responses from `ph.employer.seek.com/attachment`. **Do NOT use `page.pdf()`** — it saves a screenshot of the browser UI (SEEK chrome + candidate panel), not the actual resume file.
+
+The correct method is to intercept the `response` event for the attachment URL:
+
 ```javascript
-async function navigateAndValidate(page, url, firstName, lastName) {
-  await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-  await sleep(8000);  // React SPA needs ~8s to render — waitForFunction does NOT work here
-  const text = await page.evaluate(() => document.body.innerText);
-  const is404 = text.includes("couldn't find") || text.includes('Page not found');
-  const hasName = text.includes(firstName) || text.includes(lastName);
-  if (is404) return { ok: false, reason: '404 page' };
-  if (!hasName) return { ok: false, reason: `name not found` };
-  return { ok: true };
+async function downloadResume(page, jobId, prospectId) {
+  return new Promise(async (resolve) => {
+    let resolved = false;
+    const done = (buf) => {
+      if (!resolved) {
+        resolved = true;
+        page.off('response', responseHandler);
+        resolve(buf);
+      }
+    };
+
+    const responseHandler = async res => {
+      const ct = res.headers()['content-type'] || '';
+      const u = res.url();
+      // SEEK uses application/pdf, application/octet-stream, OR binary/octet-stream
+      const isPdf = ct.includes('application/pdf') || ct.includes('octet-stream');
+      if (isPdf && u.includes('ph.employer.seek.com/attachment')) {
+        try { done(await res.buffer()); } catch(e) { done(null); }
+      }
+    };
+
+    page.on('response', responseHandler);
+
+    try {
+      await page.goto(
+        `https://ph.employer.seek.com/candidates?jobid=${jobId}&selected=${prospectId}&tab=resume`,
+        { waitUntil: 'networkidle2', timeout: 45000 }
+      );
+    } catch(e) {}
+
+    if (!resolved) {
+      // Wait for the candidate panel to render — waitForFunction IS reliable here
+      try {
+        await page.waitForFunction(
+          () => {
+            const t = document.body.innerText;
+            return t.includes('went wrong') || t.includes('Resumé') || t.includes('Resume');
+          },
+          { timeout: 30000 }
+        );
+      } catch(e) {}
+      await new Promise(r => setTimeout(r, 3000));
+    }
+
+    if (!resolved) {
+      // "Something went wrong displaying this file. Click here to download it"
+      // The "here" link triggers a fresh attachment request — try clicking it
+      try {
+        const coords = await page.evaluate(() => {
+          const link = [...document.querySelectorAll('a')].find(a =>
+            a.innerText?.trim().toLowerCase() === 'here' &&
+            document.body.innerText.includes('went wrong')
+          );
+          if (!link) return null;
+          link.scrollIntoView({ block: 'center' });
+          const r = link.getBoundingClientRect();
+          return r.width > 0 ? { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) } : null;
+        });
+        if (coords) {
+          await page.mouse.click(coords.x, coords.y);
+          await new Promise(r => setTimeout(r, 15000));
+        }
+      } catch(e) {}
+    }
+
+    done(null);
+  });
 }
 ```
 
-**Do NOT use `waitForFunction` on SEEK pages.** The SPA renders content client-side after network idle — `waitForFunction` times out even when the content is present. Use `sleep(8000)` instead.
+**Content-type variants** SEEK uses for attachment responses:
+- `application/pdf` — most common
+- `application/octet-stream` — used for some candidates
+- `binary/octet-stream` — rare non-standard variant
 
-### Saving as PDF
-```javascript
-await page.pdf({ path: pdfPath, format: 'A4', printBackground: true });
-```
+Use `ct.includes('octet-stream')` to catch all three.
+
+### "Something went wrong" — true failure vs. recoverable
+
+The "Something went wrong displaying this file. Click **here** to download it" message means the embedded PDF viewer failed. Two outcomes:
+
+- **Attachment URL returns 200** → the `here` click fires a PDF response → recoverable
+- **Attachment URL returns 404** → file permanently deleted from SEEK servers → **true failure, unrecoverable**
+
+HTTP 404 on `ph.employer.seek.com/attachment` = file is gone. Do not retry.
 
 ### Skip-on-fail, do NOT retry
-If validation fails, skip that candidate and move on. Retrying the same URL in the same session will fail again (expired link, restricted profile). Retry separately after the main run.
+If no PDF response is received, skip that candidate and move on. Retrying the same URL in the same session will fail again. A separate retry run may recover some failures — but if the attachment URL 404s, the file is deleted and no retry will work.
 
 ---
 
 ## SPA rendering quirks
 
-- After ANY navigation to a SEEK page, wait `sleep(8000)` before reading `document.body.innerText`
-- `waitForFunction` is unreliable on this portal — the DOM updates happen after networkidle2
-- `networkidle2` is fine as `waitUntil` for `page.goto()` — just add the 8s sleep after
+- After `networkidle2`, the React candidate panel takes additional time to render. Use `waitForFunction` polling `document.body.innerText` for specific strings ("Resumé", "Resume", "went wrong") — it exits as soon as content appears, without wasting a fixed sleep.
+- `waitForFunction` IS reliable on this portal when waiting for text to appear. Earlier guidance saying it was unreliable was incorrect.
+- `networkidle2` is the correct `waitUntil` for `page.goto()` on this portal.
 
 ---
 
