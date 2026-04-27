@@ -487,17 +487,48 @@ Some portals (Google Workspace, AWS Billing) refuse to serve invoice PDFs to a `
 ```javascript
 // Puppeteer pattern — capture the download via CDP
 const client = await page.target().createCDPSession();
-await client.send('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: SAVE_DIR });
+await client.send('Browser.setDownloadBehavior', {
+  behavior: 'allow', downloadPath: SAVE_DIR, eventsEnabled: true
+});
+client.on('Browser.downloadWillBegin', e => console.log('download:', e.suggestedFilename, e.url));
+client.on('Browser.downloadProgress', e => { if (e.state !== 'inProgress') console.log('state:', e.state); });
 await page.mouse.click(linkX, linkY);  // trusted click; do NOT use dispatchEvent here
-// The PDF lands in SAVE_DIR — poll for the new file
+// The file lands in SAVE_DIR — poll for the new file or wait for state==='completed'
 ```
+
+Prefer `Browser.setDownloadBehavior` (with `eventsEnabled: true`) over the older `Page.setDownloadBehavior`. The Browser variant fires `Browser.downloadWillBegin` and `Browser.downloadProgress` events so you know the suggested filename and when the download has actually completed — instead of polling the directory blind.
 
 Symptoms that the trusted-click path is needed:
 - Direct `fetch()` of the URL returns 500 or empty
 - The link element has `onclick` but no `href` (or an `href="#"`)
 - The native browser download "just works" when clicked manually
+- **The href is a `blob:` URL** — these only exist inside the originating page's context. `https.get` and `fetch` from outside the page will fail. Trusted-click + CDP capture is the only way (verified on Proton recovery kit downloads).
 
 Pace these portals: Google Workspace rate-limits at ~20 rapid downloads → forces password re-verify. Add ≥ 2 second delay between downloads on any portal whose links are session-tokened.
+
+### Reading values from the page after a "Copy" button — read the DOM, not the clipboard
+
+When a page has a "Copy to clipboard" button (recovery phrases, API keys, share links), do **not** rely on `navigator.clipboard.readText()` to capture the value:
+
+- The clipboard returns whatever was on the **OS clipboard** before — possibly stale content from another app
+- Clipboard read access is gated by browser permissions and may silently return null
+- Many "Copy" links don't actually copy — they toggle the UI to reveal the value (Proton's `copy recovery phrase` link is one example: it swaps the recovery card from PDF mode to phrase-display mode with a `Show` button)
+
+Instead: click the reveal/show control, then extract the value from the DOM:
+
+```javascript
+// e.g. recovery phrase = 12 lowercase words space-separated
+const phrase = await page.evaluate(() => {
+  const lines = document.body.innerText.split('\n').map(l => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    const words = line.split(/\s+/);
+    if (words.length >= 12 && words.length <= 24 && words.every(w => /^[a-z]+$/.test(w))) {
+      return line;
+    }
+  }
+  return null;
+});
+```
 
 ### File output on Windows — no emoji in stdout
 
