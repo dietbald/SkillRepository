@@ -70,26 +70,31 @@ Check if a regular Chrome instance is running:
 tasklist /FI "IMAGENAME eq chrome.exe" /NH
 ```
 
-If Chrome IS running, ask the user for confirmation before killing it:
+If Chrome IS running, **offer the side-by-side option first** — do NOT default to killing:
 
-> "Chrome is currently running but not in debug mode. I need to close it and relaunch it with the remote debugging port enabled. This will close all open Chrome windows. **Do you want to proceed? (yes/no)**"
+> "Chrome is running but not in debug mode. I can either:
+> 1. Launch a second Chrome instance in debug mode alongside it (no disruption to your current windows)
+> 2. Close all Chrome windows and relaunch in debug mode
+> Which do you prefer?"
 
-Wait for the user to respond. If **yes**, proceed. If **no**, stop — Chrome must be in debug mode to continue.
-
-**On Windows — always use PowerShell to kill and launch Chrome. `start ""` in bash does NOT work reliably.**
-
+**Option 1 — second instance alongside existing Chrome (preferred, no disruption):**
 ```powershell
-# Kill existing Chrome
-taskkill /F /IM chrome.exe /T
-Start-Sleep 2
-
-# Relaunch with debug port
-Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--remote-debugging-port=9222","--user-data-dir=C:\ChromeDebug"
+Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--remote-debugging-port=9222","--user-data-dir=C:\ChromeDebug2"
 Start-Sleep 4
-
-# Verify
 Invoke-RestMethod http://127.0.0.1:9222/json/version
 ```
+Use `--user-data-dir=C:\ChromeDebug2` (a different profile) so the two instances don't conflict. Sessions in `ChromeDebug2` are separate — the user must log in on first use.
+
+**Option 2 — kill and relaunch (only if user chooses this):**
+```powershell
+taskkill /F /IM chrome.exe /T
+Start-Sleep 2
+Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--remote-debugging-port=9222","--user-data-dir=C:\ChromeDebug"
+Start-Sleep 4
+Invoke-RestMethod http://127.0.0.1:9222/json/version
+```
+
+**On Windows — always use PowerShell to launch Chrome. `start ""` in bash does NOT work reliably.**
 
 If Chrome is NOT running at all, launch directly (no confirmation needed):
 ```powershell

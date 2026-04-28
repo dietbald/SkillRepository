@@ -2,7 +2,7 @@
 <!-- RULE: Never put personal info or credentials here. Names, emails, passwords,
      API keys, account numbers, and PNRs belong in .env only. -->
 
-## Status: ✅ Verified — 2026-04-27, extracted 4,097+ candidates across 57 jobs (active + expired)
+## Status: ✅ Verified — 2026-04-28, extracted 4,097+ candidates across 57 jobs (active + expired) + incremental runs working
 
 ## Task
 Extract all applicant profiles (name, email, phone, job title, company, screening questions) + resume PDFs from active job posts on ph.employer.seek.com.
@@ -91,14 +91,34 @@ function makeGraphQL(query, variables, headers) {
 ```
 
 ### Auth token expiry
-**Tokens expire after ~11 minutes.** Before running GraphQL calls for each job, refresh cookies by navigating to that job's candidates page:
+**Tokens expire after ~11 minutes.** Before running GraphQL calls for each job, navigate to that job's candidates page and **capture a fresh `Applications` request** — this refreshes both the auth token and the full query/variables template in one step:
+
 ```javascript
+const freshReqs = [];
+const refreshHandler = req => {
+  if (req.url().includes('graphql') && req.method() === 'POST') {
+    try {
+      const p = JSON.parse(req.postData());
+      if (p.operationName === 'Applications') freshReqs.push({ p, headers: req.headers() });
+    } catch(e) {}
+  }
+  req.continue();
+};
+await page.setRequestInterception(true);
+page.on('request', refreshHandler);
 await page.goto(`https://ph.employer.seek.com/candidates?jobid=${job.id}`, { waitUntil: 'networkidle2', timeout: 60000 });
 await sleep(5000);
-const freshCookies = await page.cookies();
-capturedHeaders = { ...capturedHeaders, cookie: freshCookies.map(c => `${c.name}=${c.value}`).join('; ') };
+page.off('request', refreshHandler);
+await page.setRequestInterception(false);
+
+if (freshReqs.length > 0) {
+  capturedHeaders      = freshReqs[0].headers;
+  capturedQuery        = { query: freshReqs[0].p.query, operationName: freshReqs[0].p.operationName };
+  capturedVarTemplate  = JSON.parse(JSON.stringify(freshReqs[0].p.variables));
+}
 ```
-If you also capture a fresh `Applications` query from this navigation, update `capturedQuery` and `capturedVarTemplate` too.
+
+**Why full re-capture instead of cookie-only:** The auth token is embedded in the request headers (`Authorization` or SEEK-specific header), not just in cookies. Re-capturing the full `Applications` request guarantees all auth material is fresh.
 
 ---
 
@@ -280,3 +300,46 @@ applicants/
 4. Run: `node seek_final_extract.js`
 
 Script is at: `C:/Users/TJatBICC/Documents/JobstreetOdooLink/seek_final_extract.js`
+
+---
+
+## Incremental extraction (new candidates only)
+
+Use `applicationId` as the idempotency key. Any candidate whose `applicationId` already exists as a `profile.json` folder is skipped — no need to compare by name or date.
+
+```javascript
+function loadExistingAppIds(jobDir) {
+  const ids = new Set();
+  if (!fs.existsSync(jobDir)) return ids;
+  for (const cDir of fs.readdirSync(jobDir).filter(d => fs.statSync(path.join(jobDir, d)).isDirectory())) {
+    const pp = path.join(jobDir, cDir, 'profile.json');
+    if (!fs.existsSync(pp)) continue;
+    try {
+      const p = JSON.parse(fs.readFileSync(pp, 'utf8'));
+      if (p.applicationId) ids.add(String(p.applicationId));
+    } catch {}
+  }
+  return ids;
+}
+
+// Then, after fetching allCandidates via GraphQL:
+const existingIds = loadExistingAppIds(jobDir);
+const newCandidates = allCandidates.filter(c => !existingIds.has(String(c.applicationId)));
+```
+
+Merge new entries into `candidates_raw.json` rather than overwriting — preserves the full history:
+```javascript
+let existingRaw = [];
+if (fs.existsSync(rawPath)) {
+  try { existingRaw = JSON.parse(fs.readFileSync(rawPath, 'utf8')); } catch {}
+}
+const existingRawIds = new Set(existingRaw.map(r => String(r.applicationId)));
+for (const c of newCandidates) {
+  if (!existingRawIds.has(String(c.applicationId))) existingRaw.push(c);
+}
+fs.writeFileSync(rawPath, JSON.stringify(existingRaw, null, 2));
+```
+
+**Outcome:** `applicationId` is stable — SEEK never reassigns it. A candidate who moves between status folders retains the same `applicationId`, so incrementals correctly skip them even if their folder changed.
+
+Incremental script: `C:/Users/TJatBICC/Documents/JobstreetOdooLink/seek_incremental.js`
