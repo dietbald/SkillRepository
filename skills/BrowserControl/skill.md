@@ -598,6 +598,83 @@ This kills all `node.exe` processes. On Windows, `pkill node` (bash) is unreliab
 
 Python's default Windows stdout encoding is `cp1252`, which throws `UnicodeEncodeError` on emoji like ✅ ❌. Use ASCII tags `[OK]` / `[FAIL]` in log lines, or set `PYTHONIOENCODING=utf-8` before running. Same issue applies to Node only when piping to non-UTF-8 consoles, but it's safer to keep log output ASCII.
 
+### Remote server cookie bridge — login on Windows, run on Linux headless server
+
+When a BrowserControl script runs on a remote headless Linux server and hits a login wall, use this pattern to inject fresh cookies from the Windows Chrome session without touching the server.
+
+**Server-side (any script, any site):**
+
+```javascript
+const fs   = require('fs');
+const os   = require('os');
+const path = require('path');
+
+async function waitForCookieBridge(page, hostname) {
+  const safeHost  = hostname.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const cookieDir = path.join(os.homedir(), '.browsercontrol', 'pending-cookies');
+  const cookieFile = path.join(cookieDir, `${safeHost}.json`);
+
+  console.log(`\n*** SESSION EXPIRED for ${hostname} ***`);
+  console.log(`*** Run on Windows: node send-cookies.js ${hostname} ***\n`);
+
+  fs.mkdirSync(cookieDir, { recursive: true });
+
+  for (let i = 0; i < 120; i++) {   // wait up to 10 minutes
+    await new Promise(r => setTimeout(r, 5000));
+    if (fs.existsSync(cookieFile)) {
+      const cookies = JSON.parse(fs.readFileSync(cookieFile, 'utf8'));
+      await page.setCookie(...cookies);
+      fs.unlinkSync(cookieFile);
+      console.log(`[${cookies.length} cookies imported — resuming]`);
+      // Reload current page to activate new session
+      await page.reload({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+      return;
+    }
+  }
+  throw new Error('Timed out waiting for cookie bridge (10 min)');
+}
+```
+
+Call it immediately after detecting a login redirect:
+```javascript
+if (page.url().includes('/login') || page.url().includes('/signin')) {
+  await waitForCookieBridge(page, 'ph.employer.seek.com');
+  // then retry the operation
+}
+```
+
+**Windows-side (one command):**
+```bash
+node ~/.claude/skills/BrowserControl/send-cookies.js ph.employer.seek.com
+```
+
+`send-cookies.js` connects to Windows Chrome (launching it if needed), extracts all cookies for the domain via CDP `Network.getAllCookies`, and SCPs them to `tj@humanpower.one:~/.browsercontrol/pending-cookies/{hostname}.json`. The server detects the file, imports the cookies, and resumes automatically.
+
+**Requirements:**
+- Key-based SSH from Windows to server (no password prompt for `scp`/`ssh`)
+- Chrome must be logged into the site on Windows before running `send-cookies.js`
+- Server config: `REMOTE_SSH_USER=tj`, `REMOTE_SSH_HOST=humanpower.one` (stored in `.env`)
+
+**Why CDP `Network.getAllCookies` instead of `page.cookies()`:** `page.cookies()` only returns cookies for the current page's exact URL. `Network.getAllCookies` returns the entire browser cookie store — including root-domain cookies (e.g. `.seek.com`), httpOnly cookies, and cookies set by other tabs — which is what the server needs to fully restore the session.
+
+### Headless Chrome on Linux (Ubuntu server)
+
+```bash
+# Launch once; sessions persist in ~/.chromedebug
+chromium --remote-debugging-port=9222 \
+  --user-data-dir=$HOME/.chromedebug \
+  --headless=new \
+  --no-sandbox --disable-gpu \
+  --disable-dev-shm-usage \
+  </dev/null &
+sleep 3
+curl -s http://127.0.0.1:9222/json/version
+```
+
+`--disable-dev-shm-usage` is required on most Ubuntu servers — `/dev/shm` is too small by default and causes Chrome to crash silently.
+
+Puppeteer connects identically: `puppeteer.connect({ browserURL: 'http://127.0.0.1:9222' })` — same code as Windows.
+
 ### Idempotent re-runs handle browser context drops
 
 `TargetClosedError` (Playwright) / `Protocol error: Target closed` (Puppeteer) can fire mid-iteration on long runs — the CDP connection just drops. There's no clean recovery; design every script around `if fs.existsSync(fp) skip` so a re-run picks up where it left off rather than re-downloading everything.
