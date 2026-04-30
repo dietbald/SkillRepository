@@ -14,7 +14,7 @@ const puppeteer = require('puppeteer-core');
 const fs        = require('fs');
 const os        = require('os');
 const path      = require('path');
-const { execSync, spawnSync } = require('child_process');
+const { execSync } = require('child_process');
 
 const SERVER_USER   = 'tj';
 const SERVER_HOST   = 'humanpower.one';
@@ -38,13 +38,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 (async () => {
   // ── Ensure Chrome is running on debug port ────────────────────────────────
   if (!isDebugPortUp()) {
-    console.log('Chrome not on debug port — launching with ChromeDebug profile...');
-    spawnSync('powershell', [
-      '-Command',
-      `Start-Process "${CHROME_EXE}" -ArgumentList "--remote-debugging-port=9222","--user-data-dir=${CHROME_DATA}"`
-    ]);
-    for (let i = 0; i < 10; i++) { await sleep(1000); if (isDebugPortUp()) break; }
-    if (!isDebugPortUp()) { console.error('Chrome did not start'); process.exit(1); }
+    console.error('Chrome is not running on the debug port (9222).');
+    console.error('Please launch Chrome yourself with:');
+    console.error(`  "${CHROME_EXE}" --remote-debugging-port=9222 --user-data-dir=${CHROME_DATA}`);
+    process.exit(1);
   }
 
   const browser = await puppeteer.connect({ browserURL: 'http://127.0.0.1:9222', defaultViewport: null });

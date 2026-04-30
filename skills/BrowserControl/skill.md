@@ -47,13 +47,7 @@ Check if `~/.claude/skills/BrowserControl/sites/<sitename>.md` exists (use lower
 
 ## Step 3 — Launch or connect to Chrome
 
-> **Platform note:** This skill was originally written for Windows. On
-> **Linux/macOS**, swap PowerShell for bash, `chrome.exe` for `chromium`
-> (or `google-chrome`), `C:\ChromeDebug` for `~/.chromedebug`, and
-> `taskkill` for `pkill`. Linux users on a headless server will also need
-> a virtual display (Xvfb) — see the Linux-equivalent block in 3b. The
-> protocol the AI talks to (`http://127.0.0.1:9222`) is identical on
-> every platform.
+**NEVER kill or close the user's existing Chrome.** Always ask the user to launch Chrome themselves if it isn't already on the debug port. Provide the exact command for them to run — do not run Chrome launch or kill commands yourself.
 
 ### 3a — Check if debug port is already available
 
@@ -63,73 +57,31 @@ curl -s http://127.0.0.1:9222/json/version
 
 If this returns JSON, Chrome is already running in debug mode — skip to Step 3c.
 
-### 3b — Chrome is NOT on debug port: ask to kill and relaunch
+### 3b — Chrome is NOT on debug port: ask the user to launch it
 
-Check if a regular Chrome instance is running:
-```powershell
-tasklist /FI "IMAGENAME eq chrome.exe" /NH
+Tell the user to open a terminal and run one of these themselves:
+
+**Windows — visible Chrome (use this when you need to see the browser):**
+```
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir=C:\ChromeDebug
 ```
 
-If Chrome IS running, **offer the side-by-side option first** — do NOT default to killing:
-
-> "Chrome is running but not in debug mode. I can either:
-> 1. Launch a second Chrome instance in debug mode alongside it (no disruption to your current windows)
-> 2. Close all Chrome windows and relaunch in debug mode
-> Which do you prefer?"
-
-**Option 1 — second instance alongside existing Chrome (preferred, no disruption):**
-```powershell
-Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--remote-debugging-port=9222","--user-data-dir=C:\ChromeDebug2"
-Start-Sleep 4
-Invoke-RestMethod http://127.0.0.1:9222/json/version
+**Windows — headless Chrome (background, no window):**
 ```
-Use `--user-data-dir=C:\ChromeDebug2` (a different profile) so the two instances don't conflict. Sessions in `ChromeDebug2` are separate — the user must log in on first use.
-
-**Option 2 — kill and relaunch (only if user chooses this):**
-```powershell
-taskkill /F /IM chrome.exe /T
-Start-Sleep 2
-Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--remote-debugging-port=9222","--user-data-dir=C:\ChromeDebug"
-Start-Sleep 4
-Invoke-RestMethod http://127.0.0.1:9222/json/version
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir=C:\ChromeDebug --headless=new
 ```
 
-**On Windows — always use PowerShell to launch Chrome. `start ""` in bash does NOT work reliably.**
-
-If Chrome is NOT running at all, launch directly (no confirmation needed):
-```powershell
-Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--remote-debugging-port=9222","--user-data-dir=C:\ChromeDebug"
-Start-Sleep 4
-Invoke-RestMethod http://127.0.0.1:9222/json/version
-```
-
-**ChromeDebug profile note:** `--user-data-dir=C:\ChromeDebug` is a separate Chrome profile. On first use it is completely fresh — no saved sessions, no cookies. The user must log in manually. After logging in, the session persists for all future runs using the same `--user-data-dir`. Never delete `C:\ChromeDebug` or sessions will be lost.
-
-#### Linux equivalent (bash)
-
+**Linux/Ubuntu — headless:**
 ```bash
-# Kill any existing Chromium / Chrome
-pkill -f chromium 2>/dev/null
-pkill -f google-chrome 2>/dev/null
-sleep 2
+chromium --remote-debugging-port=9222 --user-data-dir=$HOME/.chromedebug --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage &
+```
 
-# Launch with debug port — needs a display. Xvfb on :99 is the default
-# pattern on this server. If a real DISPLAY is already set, drop the prefix.
-DISPLAY=:99 nohup chromium \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$HOME/.chromedebug" \
-  --no-sandbox --disable-gpu \
-  </dev/null >/dev/null 2>&1 &
-sleep 4
+**ChromeDebug profile note:** `--user-data-dir=C:\ChromeDebug` (Windows) or `~/.chromedebug` (Linux) is a dedicated profile separate from the user's regular Chrome. Sessions persist between runs. Never delete this directory or sessions will be lost.
 
-# Verify
+After the user launches Chrome, verify the port is up:
+```bash
 curl -s http://127.0.0.1:9222/json/version
 ```
-
-A wrapper for this is at `~/bin/chromedebug-start` — prefer it over typing
-the launch line by hand. To **see** the browser for first-time logins on a
-headless server, attach a VNC viewer to Xvfb `:99` (`x11vnc -display :99`)
-or use SSH X-forwarding from your laptop.
 
 After launching Chrome fresh, navigate to the target site and wait for login using the `ensureLoggedIn` pattern in Step 4.
 
