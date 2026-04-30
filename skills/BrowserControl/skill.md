@@ -47,7 +47,7 @@ Check if `~/.claude/skills/BrowserControl/sites/<sitename>.md` exists (use lower
 
 ## Step 3 — Launch or connect to Chrome
 
-**NEVER kill or close the user's existing Chrome.** Always ask the user to launch Chrome themselves if it isn't already on the debug port. Provide the exact command for them to run — do not run Chrome launch or kill commands yourself.
+**NEVER kill any existing Chrome instance.** If the debug port is already up, connect to it. If not, launch a new Chrome instance alongside whatever is already running.
 
 ### 3a — Check if debug port is already available
 
@@ -57,33 +57,34 @@ curl -s http://127.0.0.1:9222/json/version
 
 If this returns JSON, Chrome is already running in debug mode — skip to Step 3c.
 
-### 3b — Chrome is NOT on debug port: ask the user to launch it
+### 3b — Debug port not up: launch Chrome via Bash
 
-Tell the user to open a terminal and run one of these themselves:
+Run directly from Bash — no PowerShell needed. This launches a new instance without touching any existing Chrome windows.
 
-**Windows — visible Chrome (use this when you need to see the browser):**
-```
-"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir=C:\ChromeDebug
+**Windows — visible Chrome:**
+```bash
+"/c/Program Files/Google/Chrome/Application/chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\\ChromeDebug" &
+sleep 3
+curl -s http://127.0.0.1:9222/json/version
 ```
 
-**Windows — headless Chrome (background, no window):**
-```
-"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir=C:\ChromeDebug --headless=new
+**Windows — headless:**
+```bash
+"/c/Program Files/Google/Chrome/Application/chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\\ChromeDebug" --headless=new &
+sleep 3
+curl -s http://127.0.0.1:9222/json/version
 ```
 
 **Linux/Ubuntu — headless:**
 ```bash
 chromium --remote-debugging-port=9222 --user-data-dir=$HOME/.chromedebug --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage &
+sleep 3
+curl -s http://127.0.0.1:9222/json/version
 ```
 
 **ChromeDebug profile note:** `--user-data-dir=C:\ChromeDebug` (Windows) or `~/.chromedebug` (Linux) is a dedicated profile separate from the user's regular Chrome. Sessions persist between runs. Never delete this directory or sessions will be lost.
 
-After the user launches Chrome, verify the port is up:
-```bash
-curl -s http://127.0.0.1:9222/json/version
-```
-
-After launching Chrome fresh, navigate to the target site and wait for login using the `ensureLoggedIn` pattern in Step 4.
+After launching, navigate to the target site and wait for login using the `ensureLoggedIn` pattern in Step 4.
 
 ### 3c — Check puppeteer-core is installed
 
