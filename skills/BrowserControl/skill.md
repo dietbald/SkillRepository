@@ -160,7 +160,8 @@ npm install puppeteer-core
 const puppeteer = require('puppeteer-core');
 const browser = await puppeteer.connect({
   browserURL: 'http://127.0.0.1:9222',
-  defaultViewport: null   // use actual window size — coordinates align with getBoundingClientRect()
+  defaultViewport: null,  // use actual window size — coordinates align with getBoundingClientRect()
+  protocolTimeout: 60000  // raise from default 30s — required for heavy async SPAs (Kendo, React)
 });
 
 // Get existing tab or open new one
@@ -200,6 +201,42 @@ await page.mouse.click(x, y);  // real browser mouse event required
 Why `mouse.click()` and not `dispatchEvent` here: `dispatchEvent` fires on the element you target, but does NOT automatically propagate into child elements. Many download buttons are a `<div>` or `<button>` wrapping an inner `<a>` — the `<a>` is what actually handles navigation/tab opening. `mouse.click()` goes through the browser's full hit-testing pipeline and lands on the correct inner element.
 
 **When in doubt:** try `mouse.click()` first. If it does nothing, try `dispatchEvent`.
+
+### jQuery `data-function` buttons — use jQuery trigger, not a direct click
+
+Some sites (TMDB, older jQuery-based SPAs) wire button clicks via delegated jQuery handlers: `$('[data-function="openConfirmDialog()"]').on('click', ...)`. Neither `page.mouse.click()` nor `dispatchEvent('click')` fires these — the jQuery listener never sees the event.
+
+```javascript
+// ❌ Both fail on jQuery-delegated handlers
+await page.mouse.click(x, y);
+await page.evaluate(() => el.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+// ✅ Correct — trigger via jQuery's own event system
+await page.evaluate(() => {
+  $('[data-function="openConfirmDialog()"]').trigger('click');
+});
+```
+
+This works because jQuery synthetic events travel through jQuery's internal dispatcher, which is where the `data-function` listener is registered. Check for this pattern by inspecting the button's HTML — if it has `data-function="someCall()"` with no `onclick` or `href`, it's jQuery-delegated.
+
+### Async dynamic import dialogs — wait 10–12 seconds after trigger
+
+Some UI components (Kendo UI, older lazy-loaded dialogs) load their module asynchronously on first use: `import('/kendo.dialog.js').then(init)`. The button click that opens the dialog succeeds immediately, but the dialog DOM isn't created until the async import resolves — typically 5–12 seconds on first load.
+
+```javascript
+// Trigger via jQuery (see above), then wait for the async module to load
+await page.evaluate(() => $('[data-function="openConfirmDialog()"]').trigger('click'));
+await sleep(12000);  // Kendo loads via async import — needs 10-12s on first trigger
+
+const dialogVisible = await page.evaluate(() => !!document.querySelector('.k-dialog, .k-window'));
+if (!dialogVisible) {
+  // retry once if still not visible
+  await page.evaluate(() => $('[data-function="openConfirmDialog()"]').trigger('click'));
+  await sleep(10000);
+}
+```
+
+Why 12 seconds: the async `import()` call initiates a network fetch for the module bundle. On a slow connection or cold CDN, this can exceed 10 seconds. Fixed sleeps are necessary here — `waitForFunction` works too but the selector (`.k-dialog`) is Kendo-specific.
 
 ### Click silently no-ops — check `aria-disabled` and `pointer-events`
 
@@ -445,6 +482,32 @@ for (let y = 100; y < 900; y += 10) {
   if (el?.innerText?.trim() === 'Target') { /* found */ break; }
 }
 ```
+
+### page.type() is too slow for multi-field forms — use evaluate bulk setter instead
+
+`page.type(selector, text, { delay: 40 })` types at 40ms per character. A form with 8 fields averaging 15 chars each = ~5 seconds of typing. With `protocolTimeout: 60000` this can still hit the limit on complex SPAs, and it's always slower than necessary.
+
+**Use `page.evaluate()` to set all field values at once:**
+```javascript
+await page.evaluate(() => {
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = val;
+    el.dispatchEvent(new Event('input',  { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  set('application_name', 'Personal Movie App');
+  set('application_url',  'https://bicc.ph');
+  set('contact_first_name', 'Marcus');
+  set('contact_last_name',  'Whitfield');
+  // ... all fields in one round-trip
+});
+```
+
+Why this works: React and Vue both update their internal state when `input`/`change` events fire on a native element — they don't require real keystrokes. The `set()` helper above is the minimal correct pattern: assign `.value`, then dispatch both events.
+
+When NOT to use this: login forms with anti-bot checks (some sites detect that no keydown events fired) — use `page.type()` for username/password fields specifically.
 
 ### Stale element references — "Node is either not clickable or not an Element"
 
@@ -734,6 +797,24 @@ const result = await frame.evaluate(() => document.querySelectorAll('.b3id-colla
 
 When `page.evaluate(...)` returns `0` or `null` for elements you can clearly see in a screenshot, suspect an iframe. List `page.frames()` and look for one whose URL matches the inner application.
 
+**Proton Mail email body is in a nested iframe.** The main page (`mail.proton.me`) renders the email list, but when a message is open, the email body (including all links like verification URLs) is rendered inside a sandboxed iframe that shares the same base URL. Iterating `page.frames()` and searching each frame is required:
+
+```javascript
+let verifyLink = null;
+for (const frame of page.frames()) {
+  try {
+    const links = await frame.evaluate(() =>
+      [...document.querySelectorAll('a')]
+        .map(a => a.href)
+        .filter(h => h.includes('themoviedb') || h.includes('verify') || h.includes('activate'))
+    );
+    if (links.length > 0) { verifyLink = links[0]; break; }
+  } catch (e) {}  // some frames (extensions, sandboxed) throw on evaluate — ignore
+}
+```
+
+The email body iframe is typically frame index 3–5 when Proton Mail is fully loaded.
+
 ### Filtering out duplicate / hidden DOM nodes
 
 Some portals create a NEW hidden popup each time a menu is opened (the old one stays in the DOM). The same element selector matches both the visible and the stale instances — clicking the wrong one does nothing.
@@ -772,6 +853,24 @@ Symptoms that the trusted-click path is needed:
 
 Pace these portals: Google Workspace rate-limits at ~20 rapid downloads → forces password re-verify. Add ≥ 2 second delay between downloads on any portal whose links are session-tokened.
 
+### `<textarea readonly>` values are invisible to `innerText` — read `.value` or parse HTML
+
+`document.body.innerText` (and `document.body.textContent`) skips `<textarea>` element values — you get the label text but not the content of the textarea. This silently breaks API key extraction, confirmation codes, and any form where the value is pre-filled into a read-only textarea.
+
+```javascript
+// ❌ Wrong — returns "" for textarea content
+const key = (await page.evaluate(() => document.body.innerText)).match(/[a-f0-9]{32}/)?.[0];
+
+// ✅ Option A — read the textarea .value directly
+const key = await page.evaluate(() => document.querySelector('#v3_api_key')?.value);
+
+// ✅ Option B — parse innerHTML with a regex if you don't know the selector
+const key = (await page.evaluate(() => document.body.innerHTML))
+  .match(/<textarea[^>]*>([a-f0-9]{32})<\/textarea>/)?.[1];
+```
+
+Sites known to use this pattern: TMDB (`#v3_api_key` textarea), any portal that shows tokens/secrets in a read-only field.
+
 ### Reading values from the page after a "Copy" button — read the DOM, not the clipboard
 
 When a page has a "Copy to clipboard" button (recovery phrases, API keys, share links), do **not** rely on `navigator.clipboard.readText()` to capture the value:
@@ -795,6 +894,29 @@ const phrase = await page.evaluate(() => {
   return null;
 });
 ```
+
+### Inline `node -e` with CSS ID selectors — bash treats `#` as a comment
+
+Running `node -e 'console.log(page.$("#login"))'` in bash will silently truncate everything after the `#` — bash treats it as a comment character. The script runs but the selector is empty, causing confusing `null` results with no error.
+
+**Always write scripts to `.js` files when using CSS ID selectors:**
+```bash
+# ❌ Bash silently strips everything after # — page.$( gets "" as selector
+node -e "const p = ...; p.$('#login').click();"
+
+# ✅ Write to file first, then run
+cat > /tmp/click.js << 'EOF'
+const puppeteer = require('puppeteer-core');
+(async () => {
+  const b = await puppeteer.connect({ browserURL: 'http://127.0.0.1:9222' });
+  const [p] = await b.pages();
+  await p.$('#login').click();
+})();
+EOF
+node /tmp/click.js
+```
+
+This applies to any bash heredoc or `-e` argument containing `#id`, `#selector`, or `#comment-text`. Single-quoted heredocs (`<< 'EOF'`) are the safe container — bash does not interpret `#` inside them.
 
 ### Running a long Node script in a visible Windows terminal
 
