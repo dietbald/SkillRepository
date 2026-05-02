@@ -1,0 +1,583 @@
+#!/bin/bash
+# gpu-task — Run GPU/CPU-intensive tasks on a temporary AWS EC2 spot instance
+#
+# Usage:
+#   gpu-task whisper <file.mp3> [--model medium] [--language en]
+#   gpu-task tesseract <file.pdf|file.jpg> [--output /path/to/dir]
+#   gpu-task run "<shell command>" [--input file1 file2] [--output /path/to/dir]
+#   gpu-task setup-ami    ← one-time: build a pre-baked AMI with all tools
+#   gpu-task list         ← list running gpu-runner instances
+#   gpu-task kill <id>    ← manually terminate an instance
+#
+# Examples:
+#   gpu-task whisper interview.mp3 --model medium --language en
+#   gpu-task tesseract contract.pdf --output ~/documents/ocr
+#   gpu-task run "python3 train.py" --input model.py data.csv --output ~/results
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/config.env"
+
+# Colors
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+log()  { echo -e "${BLUE}[gpu-task]${NC} $*"; }
+ok()   { echo -e "${GREEN}[gpu-task]${NC} $*"; }
+warn() { echo -e "${YELLOW}[gpu-task]${NC} $*"; }
+err()  { echo -e "${RED}[gpu-task]${NC} $*" >&2; exit 1; }
+
+TASK="$1"; shift || true
+
+# Default mode is warm/queue. --oneoff flag launches fresh instance, runs, then terminates.
+ONEOFF=false
+CLEAN_ARGS=()
+for arg in "$@"; do
+  [[ "$arg" == "--oneoff" ]] && ONEOFF=true || CLEAN_ARGS+=("$arg")
+done
+set -- "${CLEAN_ARGS[@]}"
+
+# Check if warm instance is running
+warm_instance_running() {
+  [ -f /tmp/gpu-runner-instance.state ] || return 1
+  source /tmp/gpu-runner-instance.state
+  ALIVE=$(aws ec2 describe-instances \
+    --instance-ids "$INSTANCE_ID" \
+    --query 'Reservations[0].Instances[0].State.Name' \
+    --output text --region "$AWS_REGION" 2>/dev/null)
+  [[ "$ALIVE" == "running" ]]
+}
+
+# Start a warm instance with queue server if not already running
+ensure_warm() {
+  local SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -i $KEY_PATH"
+
+  # Check if warm instance is already running and reachable
+  if warm_instance_running; then
+    source /tmp/gpu-runner-instance.state
+    # Verify SSH still reachable (instance may have shut itself down)
+    if ssh $SSH_OPTS ubuntu@"$PUBLIC_IP" "echo ok" >/dev/null 2>&1; then
+      ok "Reusing warm instance $INSTANCE_ID @ $PUBLIC_IP"
+      return
+    else
+      warn "Warm instance $INSTANCE_ID unreachable — starting fresh..."
+      rm -f /tmp/gpu-runner-instance.state
+    fi
+  fi
+
+  log "No warm instance — starting one (~90s, then all future jobs are instant)..."
+  INFO=$(bash "$SCRIPT_DIR/lib/launch.sh" 2>&1) || INFO=$(bash "$SCRIPT_DIR/lib/launch.sh" --ondemand 2>&1)
+  INSTANCE_ID=$(echo "$INFO" | grep '^{' | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["instance_id"])')
+  PUBLIC_IP=$(echo  "$INFO" | grep '^{' | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["public_ip"])')
+  echo "INSTANCE_ID=$INSTANCE_ID" > /tmp/gpu-runner-instance.state
+  echo "PUBLIC_IP=$PUBLIC_IP"    >> /tmp/gpu-runner-instance.state
+
+  # Upload queue server and start it in a tmux session (more reliable than nohup)
+  scp $SSH_OPTS "$SCRIPT_DIR/lib/queue-server.sh" ubuntu@"$PUBLIC_IP":~/queue-server.sh >/dev/null
+  ssh $SSH_OPTS ubuntu@"$PUBLIC_IP" \
+    "chmod +x ~/queue-server.sh && mkdir -p ~/queue ~/output ~/done && \
+     tmux new-session -d -s queue 'exec ~/queue-server.sh' 2>/dev/null || \
+     tmux kill-session -t queue 2>/dev/null; tmux new-session -d -s queue 'exec ~/queue-server.sh'" >/dev/null
+  sleep 1
+  ok "Warm instance ready: $INSTANCE_ID @ $PUBLIC_IP (auto-terminates after 300s idle)"
+}
+
+# Submit job to queue and wait for result
+queue_job() {
+  local task="$1"; shift
+  JOB_ID=$(bash "$SCRIPT_DIR/lib/queue-client.sh" "$task" "$@")
+  bash "$SCRIPT_DIR/lib/queue-wait.sh" "$JOB_ID" "$OUTPUT_DIR"
+}
+
+# ── HELPERS ─────────────────────────────────────────────────────────────────
+
+ensure_s3_bucket() {
+  if ! aws s3 ls "s3://$S3_BUCKET" &>/dev/null; then
+    log "Creating S3 bucket $S3_BUCKET..."
+    aws s3 mb "s3://$S3_BUCKET" --region "$AWS_REGION"
+  fi
+}
+
+launch_instance() {
+  local MODE="${1:-spot}"
+  if [[ "$MODE" == "ondemand" ]]; then
+    log "Launching on-demand instance ($INSTANCE_TYPE)..."
+    INFO=$(bash "$SCRIPT_DIR/lib/launch.sh" --ondemand)
+  else
+    log "Launching spot instance ($INSTANCE_TYPE)..."
+    INFO=$(bash "$SCRIPT_DIR/lib/launch.sh" 2>&1) || {
+      warn "Spot failed, falling back to on-demand..."
+      INFO=$(bash "$SCRIPT_DIR/lib/launch.sh" --ondemand)
+    }
+  fi
+  INSTANCE_ID=$(echo "$INFO" | grep '^{' | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['instance_id'])")
+  PUBLIC_IP=$(echo "$INFO"  | grep '^{' | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['public_ip'])")
+  ok "Instance $INSTANCE_ID ready at $PUBLIC_IP"
+}
+
+terminate_instance() {
+  log "Terminating instance $INSTANCE_ID..."
+  bash "$SCRIPT_DIR/lib/terminate.sh" "$INSTANCE_ID"
+  ok "Instance terminated. Job complete."
+}
+
+ssh_run() {
+  ssh -o StrictHostKeyChecking=no \
+      -o ConnectTimeout=30 \
+      -i "$KEY_PATH" \
+      ubuntu@"$PUBLIC_IP" "$@"
+}
+
+scp_up() {
+  scp -o StrictHostKeyChecking=no \
+      -i "$KEY_PATH" \
+      "$@"
+}
+
+upload_inputs() {
+  ssh_run "mkdir -p ~/input ~/output"
+  if [ ${#INPUT_FILES[@]} -gt 0 ]; then
+    log "Uploading ${#INPUT_FILES[@]} input file(s)..."
+    if [ ${#INPUT_FILES[@]} -gt 10 ]; then
+      # Bulk upload via rsync (much faster for many files)
+      local tmp_manifest
+      tmp_manifest=$(mktemp)
+      printf '%s\n' "${INPUT_FILES[@]}" | sed 's|.*/||' > /dev/null  # names only
+      rsync -az --progress --files-from=<(printf '%s\n' "${INPUT_FILES[@]}") \
+        / ubuntu@"$PUBLIC_IP":~/input/ \
+        -e "ssh -o StrictHostKeyChecking=no -i $KEY_PATH" 2>/dev/null || {
+        # fallback: rsync with absolute paths directly
+        rsync -az --progress \
+          "${INPUT_FILES[@]}" \
+          ubuntu@"$PUBLIC_IP":~/input/ \
+          -e "ssh -o StrictHostKeyChecking=no -i $KEY_PATH"
+      }
+      rm -f "$tmp_manifest"
+    else
+      for f in "${INPUT_FILES[@]}"; do
+        log "  → $f"
+        scp_up "$f" ubuntu@"$PUBLIC_IP":~/input/
+      done
+    fi
+  fi
+}
+
+download_outputs() {
+  log "Downloading results to $OUTPUT_DIR..."
+  mkdir -p "$OUTPUT_DIR"
+  scp_up -r ubuntu@"$PUBLIC_IP":~/output/. "$OUTPUT_DIR/"
+  ok "Results saved to $OUTPUT_DIR"
+  ls "$OUTPUT_DIR"
+}
+
+install_tools_if_needed() {
+  # If not using a pre-baked AMI, install tools on first boot
+  if [ -z "$GPU_AMI" ]; then
+    warn "No pre-baked AMI set. Installing tools on instance (this takes ~3-5 min first time)..."
+    warn "Run 'gpu-task setup-ami' once to make future launches instant."
+    ssh_run "bash -s" < "$SCRIPT_DIR/setup-ami.sh" &
+    sleep 10
+    ssh_run "
+      sudo apt-get update -qq &&
+      sudo apt-get install -y -q python3-pip ffmpeg tesseract-ocr poppler-utils &&
+      pip3 install -q openai-whisper
+    "
+  fi
+}
+
+# ── COMMANDS ────────────────────────────────────────────────────────────────
+
+case "$TASK" in
+
+  whisper)
+    INPUT_FILE="$1"; shift || err "No input file specified"
+    [ -f "$INPUT_FILE" ] || err "File not found: $INPUT_FILE"
+
+    # Parse options
+    WHISPER_MODEL="medium"
+    WHISPER_LANG=""
+    OUTPUT_DIR="$(dirname "$INPUT_FILE")"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --model)    WHISPER_MODEL="$2"; shift 2 ;;
+        --language) WHISPER_LANG="$2";  shift 2 ;;
+        --output)   OUTPUT_DIR="$2";    shift 2 ;;
+        *) shift ;;
+      esac
+    done
+
+    INPUT_FILES=("$INPUT_FILE")
+    log "Task: whisper | File: $INPUT_FILE | Model: $WHISPER_MODEL"
+
+    if $ONEOFF; then
+      log "One-off mode: launch → run → terminate"
+      launch_instance
+      install_tools_if_needed
+      upload_inputs
+      ssh_run "WHISPER_MODEL=$WHISPER_MODEL WHISPER_LANGUAGE=$WHISPER_LANG bash -s" < "$SCRIPT_DIR/tasks/whisper.sh"
+      download_outputs
+      terminate_instance
+    else
+      ensure_warm
+      queue_job whisper "$INPUT_FILE" --model "$WHISPER_MODEL" --language "$WHISPER_LANG" --output "$OUTPUT_DIR"
+    fi
+    ;;
+
+  tesseract)
+    INPUT_FILE="$1"; shift || err "No input file specified"
+    [ -f "$INPUT_FILE" ] || err "File not found: $INPUT_FILE"
+
+    OUTPUT_DIR="$(dirname "$INPUT_FILE")/ocr-output"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --output) OUTPUT_DIR="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+
+    INPUT_FILES=("$INPUT_FILE")
+    log "Task: tesseract | File: $INPUT_FILE"
+
+    if $ONEOFF; then
+      log "One-off mode: launch → run → terminate"
+      launch_instance
+      install_tools_if_needed
+      upload_inputs
+      ssh_run "bash -s" < "$SCRIPT_DIR/tasks/tesseract.sh"
+      download_outputs
+      terminate_instance
+    else
+      ensure_warm
+      queue_job tesseract "$INPUT_FILE" --output "$OUTPUT_DIR"
+    fi
+    ;;
+
+  ffmpeg)
+    INPUT_FILE="$1"; shift || err "No input file specified"
+    [ -f "$INPUT_FILE" ] || err "File not found: $INPUT_FILE"
+
+    FFMPEG_CMD=""
+    OUTPUT_DIR="$(dirname "$INPUT_FILE")/ffmpeg-output"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --cmd)    FFMPEG_CMD="$2"; shift 2 ;;
+        --output) OUTPUT_DIR="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+
+    INPUT_FILES=("$INPUT_FILE")
+    log "Task: ffmpeg | File: $INPUT_FILE"
+
+    if $ONEOFF; then
+      log "One-off mode: launch → run → terminate"
+      launch_instance
+      upload_inputs
+      ssh_run "FFMPEG_CMD='$FFMPEG_CMD' bash -s" < "$SCRIPT_DIR/tasks/ffmpeg.sh"
+      download_outputs
+      terminate_instance
+    else
+      ensure_warm
+      queue_job ffmpeg "$INPUT_FILE" --cmd "$FFMPEG_CMD" --output "$OUTPUT_DIR"
+    fi
+    ;;
+
+  batch)
+    # Run one task type over many files on a single instance
+    # Usage: gpu-task batch whisper *.mp3 [--model medium]
+    # Usage: gpu-task batch tesseract ~/docs/*.pdf [--output ~/ocr]
+    BATCH_TASK="$1"; shift || err "No task type specified (whisper|tesseract|ffmpeg)"
+
+    INPUT_FILES=()
+    EXTRA_ARGS=()
+    OUTPUT_DIR=""
+
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --output) OUTPUT_DIR="$2"; shift 2 ;;
+        --*)      EXTRA_ARGS+=("$1" "$2"); shift 2 ;;
+        *)
+          [ -f "$1" ] && INPUT_FILES+=("$1") || warn "Skipping (not a file): $1"
+          shift ;;
+      esac
+    done
+
+    [ ${#INPUT_FILES[@]} -eq 0 ] && err "No input files found"
+    [ -z "$OUTPUT_DIR" ] && OUTPUT_DIR="$(dirname "${INPUT_FILES[0]}")/${BATCH_TASK}-output"
+
+    log "Batch $BATCH_TASK | ${#INPUT_FILES[@]} files → $OUTPUT_DIR"
+
+    launch_instance
+    install_tools_if_needed
+
+    # Disable idle auto-shutdown for the duration of this batch job
+    log "Disabling queue-server idle timer for batch job..."
+    ssh_run "sudo shutdown -c 2>/dev/null; pkill -f queue-server 2>/dev/null; true" || true
+
+    log "Uploading ${#INPUT_FILES[@]} files..."
+    ssh_run "mkdir -p ~/input ~/output"
+    if [ ${#INPUT_FILES[@]} -gt 10 ]; then
+      # Bulk upload via rsync (much faster for many files — avoids per-file ssh overhead)
+      log "  Using rsync for bulk upload..."
+      rsync -az --info=progress2 \
+        "${INPUT_FILES[@]}" \
+        ubuntu@"$PUBLIC_IP":~/input/ \
+        -e "ssh -o StrictHostKeyChecking=no -i $KEY_PATH"
+    else
+      for f in "${INPUT_FILES[@]}"; do
+        log "  → $(basename "$f")"
+        scp_up "$f" ubuntu@"$PUBLIC_IP":~/input/
+      done
+    fi
+
+    log "Processing all files on single instance..."
+    case "$BATCH_TASK" in
+      whisper)
+        WHISPER_MODEL="medium"; WHISPER_LANG=""
+        for arg in "${EXTRA_ARGS[@]}"; do
+          [[ "$prev" == "--model" ]]    && WHISPER_MODEL="$arg"
+          [[ "$prev" == "--language" ]] && WHISPER_LANG="$arg"
+          prev="$arg"
+        done
+        # Run whisper on all audio files in input dir
+        ssh_run "python3 - <<'PYEOF'
+import whisper, json, os
+model = whisper.load_model('$WHISPER_MODEL')
+output_dir = os.path.expanduser('~/output')
+for fn in sorted(os.listdir(os.path.expanduser('~/input'))):
+    if not fn.lower().endswith(('.mp3','.mp4','.wav','.m4a','.ogg')): continue
+    input_file = os.path.expanduser(f'~/input/{fn}')
+    base = os.path.splitext(fn)[0]
+    print(f'[whisper] Transcribing: {fn}')
+    result = model.transcribe(input_file, language='$WHISPER_LANG' or None, verbose=False)
+    with open(f'{output_dir}/{base}.txt','w') as f: f.write(result['text'].strip())
+    with open(f'{output_dir}/{base}.json','w') as f: json.dump(result,f,indent=2)
+    def ft(s):
+        h,m=int(s//3600),int((s%3600)//60); sec,ms=int(s%60),int((s%1)*1000)
+        return f'{h:02}:{m:02}:{sec:02},{ms:03}'
+    with open(f'{output_dir}/{base}.srt','w') as f:
+        for i,seg in enumerate(result['segments'],1):
+            f.write(f\"{i}\n{ft(seg['start'])} --> {ft(seg['end'])}\n{seg['text'].strip()}\n\n\")
+    print(f'[whisper] Done: {base}.txt')
+print('[whisper] All files complete')
+PYEOF"
+        ;;
+      tesseract)
+        ssh_run "bash -s" < "$SCRIPT_DIR/tasks/tesseract.sh"
+        ;;
+      ffmpeg)
+        ssh_run "FFMPEG_CMD='' bash -s" < "$SCRIPT_DIR/tasks/ffmpeg.sh"
+        ;;
+      *) err "Unknown batch task: $BATCH_TASK" ;;
+    esac
+
+    download_outputs
+    terminate_instance
+    ;;
+
+  run)
+    CMD="$1"; shift || err "No command specified"
+    INPUT_FILES=()
+    OUTPUT_DIR="/tmp/gpu-output-$$"
+
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --input)
+          shift
+          while [[ $# -gt 0 && "$1" != --* ]]; do
+            INPUT_FILES+=("$1"); shift
+          done ;;
+        --output) OUTPUT_DIR="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+
+    log "Task: custom run | Command: $CMD"
+
+    launch_instance
+    install_tools_if_needed
+    upload_inputs
+
+    log "Running command on remote..."
+    ssh_run "CUSTOM_CMD='$CMD' bash -s" < "$SCRIPT_DIR/tasks/custom.sh"
+
+    download_outputs
+    terminate_instance
+    ;;
+
+  status)
+    if [ -f /tmp/gpu-runner-instance.state ]; then
+      source /tmp/gpu-runner-instance.state
+      ALIVE=$(aws ec2 describe-instances \
+        --instance-ids "$INSTANCE_ID" \
+        --query 'Reservations[0].Instances[0].State.Name' \
+        --output text --region "$AWS_REGION" 2>/dev/null)
+      if [[ "$ALIVE" == "running" ]]; then
+        ok "Warm instance: $INSTANCE_ID @ $PUBLIC_IP (running)"
+        SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=5 -i $KEY_PATH"
+        QUEUE=$(ssh $SSH_OPTS ubuntu@"$PUBLIC_IP" "ls ~/queue/*.job 2>/dev/null | wc -l" 2>/dev/null || echo "?")
+        DONE=$(ssh  $SSH_OPTS ubuntu@"$PUBLIC_IP" "ls ~/done/*.done 2>/dev/null | wc -l" 2>/dev/null || echo "?")
+        log "Queue: $QUEUE pending, $DONE completed"
+        ssh $SSH_OPTS ubuntu@"$PUBLIC_IP" "tail -5 ~/queue-server.log" 2>/dev/null || true
+      else
+        warn "Instance $INSTANCE_ID is $ALIVE — removing state"
+        rm -f /tmp/gpu-runner-instance.state
+      fi
+    else
+      log "No warm instance running."
+    fi
+    log "All gpu-runner instances:"
+    aws ec2 describe-instances \
+      --filters "Name=tag:ManagedBy,Values=gpu-task" \
+                "Name=instance-state-name,Values=pending,running" \
+      --query 'Reservations[*].Instances[*].[InstanceId,PublicIpAddress,State.Name,LaunchTime]' \
+      --output table --region "$AWS_REGION"
+    ;;
+
+  keepwarm)
+    # Start a warm instance that stays up waiting for jobs (5 min idle timeout)
+    IDLE=${1:-300}
+    log "Starting warm instance (idle timeout: ${IDLE}s)..."
+    AMI="${GPU_AMI:-$BASE_AMI}"
+    INFO=$(bash "$SCRIPT_DIR/lib/launch.sh" 2>&1)
+    INSTANCE_ID=$(echo "$INFO" | grep '^{' | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['instance_id'])")
+    PUBLIC_IP=$(echo "$INFO"  | grep '^{' | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['public_ip'])")
+    echo "INSTANCE_ID=$INSTANCE_ID" > /tmp/gpu-runner-instance.state
+    echo "PUBLIC_IP=$PUBLIC_IP"    >> /tmp/gpu-runner-instance.state
+    SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -i $KEY_PATH"
+    scp $SSH_OPTS "$SCRIPT_DIR/lib/queue-server.sh" ubuntu@"$PUBLIC_IP":~/queue-server.sh
+    ssh $SSH_OPTS ubuntu@"$PUBLIC_IP" \
+      "chmod +x ~/queue-server.sh && mkdir -p ~/queue ~/output ~/done && \
+       IDLE_TIMEOUT=$IDLE nohup ~/queue-server.sh >~/queue-server.log 2>&1 &"
+    ok "Warm instance ready: $INSTANCE_ID @ $PUBLIC_IP"
+    ok "Any gpu-task job will now run without cold start delay."
+    ok "Instance auto-terminates after ${IDLE}s idle."
+    ;;
+
+  list)
+    log "Running gpu-runner instances:"
+    aws ec2 describe-instances \
+      --filters "Name=tag:ManagedBy,Values=gpu-task" \
+                "Name=instance-state-name,Values=pending,running" \
+      --query 'Reservations[*].Instances[*].[InstanceId,PublicIpAddress,State.Name,LaunchTime]' \
+      --output table \
+      --region "$AWS_REGION"
+    ;;
+
+  kill)
+    INSTANCE_ID="$1"; shift || err "No instance ID specified"
+    rm -f /tmp/gpu-runner-instance.state
+    bash "$SCRIPT_DIR/lib/terminate.sh" "$INSTANCE_ID"
+    ;;
+
+  setup-ami)
+    log "Building pre-baked GPU AMI (takes ~10 minutes)..."
+    log "This installs CUDA, Whisper, Tesseract, ffmpeg on a fresh instance"
+    log "After this, all future tasks start in ~90 seconds with no install wait."
+
+    # Launch base instance on-demand (spot limits may not be set on new accounts)
+    GPU_AMI=""
+    INFO=$(bash "$SCRIPT_DIR/lib/launch.sh" --ondemand)
+    INSTANCE_ID=$(echo "$INFO" | grep '^{' | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['instance_id'])")
+    PUBLIC_IP=$(echo "$INFO"  | grep '^{' | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['public_ip'])")
+
+    log "Installing tools on $PUBLIC_IP (this takes ~10 min)..."
+    ssh_run "
+      set -e
+      echo '[setup] Updating system...'
+      sudo apt-get update -qq
+      sudo apt-get upgrade -y -q
+
+      echo '[setup] Installing system tools...'
+      sudo apt-get install -y -q \
+        python3-pip ffmpeg tmux \
+        tesseract-ocr tesseract-ocr-eng \
+        poppler-utils imagemagick \
+        git curl wget
+
+      echo '[setup] Installing Python ML tools...'
+      pip3 install --quiet openai-whisper torch torchvision torchaudio
+
+      echo '[setup] Verifying GPU stack...'
+      nvidia-smi || { echo '[setup] FATAL: nvidia-smi failed — driver missing'; exit 1; }
+      python3 -c 'import torch; assert torch.cuda.is_available(); print(torch.__version__, torch.version.cuda, torch.cuda.get_device_name(0))' \
+        || { echo '[setup] FATAL: torch cannot see GPU'; exit 1; }
+
+      echo '[setup] Cleanup...'
+      sudo apt-get clean
+      rm -rf ~/.cache/pip
+
+      echo '[setup] Done!'
+    "
+
+    # Clean up any leftover test files before baking
+    ssh_run "rm -rf ~/input ~/output ~/tmp_pages && mkdir -p ~/input ~/output"
+
+    # Flush dirty pages so the snapshot doesn't capture half-written .so files.
+    # Without this, --no-reboot can produce AMIs where torch/whisper bus-error on import.
+    log "Flushing filesystem before snapshot..."
+    ssh_run "sync && sudo sync && sleep 3 && sudo sync"
+
+    # Create AMI. We drop --no-reboot — AWS reboots the instance for a clean
+    # snapshot, which is slower (~90s extra) but avoids torn-write corruption.
+    log "Creating AMI snapshot (instance will reboot for a clean image)..."
+    NEW_AMI=$(aws ec2 create-image \
+      --instance-id "$INSTANCE_ID" \
+      --name "gpu-runner-$(date +%Y%m%d-%H%M)" \
+      --description "GPU Runner: Whisper + Tesseract + CUDA" \
+      --query 'ImageId' \
+      --output text \
+      --region "$AWS_REGION")
+
+    log "AMI $NEW_AMI being created (takes ~5 min)..."
+    # Poll manually — aws wait times out after ~10min on large AMIs
+    for i in $(seq 1 60); do
+      STATE=$(aws ec2 describe-images --image-ids "$NEW_AMI" --region "$AWS_REGION" \
+        --query 'Images[0].State' --output text 2>/dev/null)
+      if [[ "$STATE" == "available" ]]; then break; fi
+      log "AMI state: $STATE (attempt $i/60)..."
+      sleep 15
+    done
+
+    # Update config
+    sed -i "s/^GPU_AMI=.*/GPU_AMI=$NEW_AMI/" "$SCRIPT_DIR/config.env"
+
+    ok "AMI ready: $NEW_AMI"
+    ok "config.env updated. Future tasks will use this AMI."
+
+    terminate_instance
+    ;;
+
+  ""|--help|-h)
+    echo ""
+    echo "gpu-task — Run heavy tasks on a warm AWS EC2 spot instance"
+    echo ""
+    echo "Default: uses a shared warm instance (auto-starts if needed, auto-terminates after 5min idle)."
+    echo "Add --oneoff to launch a fresh instance, run, then terminate immediately."
+    echo ""
+    echo "Usage:"
+    echo "  gpu-task whisper <file>       [--model tiny|base|small|medium|large] [--language en] [--oneoff]"
+    echo "  gpu-task tesseract <file>     [--output /path] [--oneoff]"
+    echo "  gpu-task ffmpeg <file>        [--cmd 'ffmpeg args'] [--output /path] [--oneoff]"
+    echo "  gpu-task batch <task> <files> [options]   # multiple files, one instance"
+    echo "  gpu-task run '<command>'      [--input file1 file2 ...] [--output /path]"
+    echo "  gpu-task keepwarm [seconds]   Start warm instance explicitly (default 300s idle timeout)"
+    echo "  gpu-task status               Show warm instance status and queue"
+    echo "  gpu-task setup-ami            Rebuild pre-baked AMI (run after adding tools)"
+    echo "  gpu-task list                 List all running instances"
+    echo "  gpu-task kill <instance-id>   Terminate an instance"
+    echo ""
+    echo "Examples:"
+    echo "  gpu-task whisper interview.mp3 --model medium --language en"
+    echo "  gpu-task tesseract contract.pdf --output ~/docs/ocr"
+    echo "  gpu-task batch tesseract ~/scans/*.pdf --output ~/ocr"
+    echo "  gpu-task batch whisper ~/recordings/*.mp3 --model medium"
+    echo "  gpu-task whisper interview.mp3 --oneoff   # launch fresh, terminate after"
+    echo ""
+    echo "Cost: ~\$0.17/hr on-demand (c5.2xlarge). GPU upgrade pending quota approval."
+    echo ""
+    ;;
+
+  *)
+    err "Unknown task: $TASK. Run 'gpu-task --help' for usage."
+    ;;
+esac

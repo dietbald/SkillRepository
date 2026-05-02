@@ -1,0 +1,527 @@
+#!/bin/bash
+# runpod-codex — manage a RunPod pod for Codex CLI usage.
+#
+# Subcommands: start | stop | kill | status | tunnel | idle-watch | codex | logs
+
+set -euo pipefail
+
+# ----- Config -----
+RUNPOD_API_KEY="${RUNPOD_API_KEY:-$(pass show api/runpod-claude 2>/dev/null || echo '')}"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/runpod-claude}"
+SSH_PUB_KEY="$(cat "${SSH_KEY}.pub" 2>/dev/null || echo '')"
+MODEL="${RUNPOD_CODEX_MODEL:-juilpark/gemma-4-31B-it-uncensored-heretic:q4_k_m}"
+VOLUME_ID="${RUNPOD_CODEX_VOLUME:-1dm5z3ou1t}"
+DATACENTER="${RUNPOD_CODEX_DC:-AP-JP-1}"
+GPU_TYPES_JSON="${RUNPOD_CODEX_GPU:-[\"NVIDIA H100 80GB HBM3\"]}"
+POD_NAME="${RUNPOD_CODEX_POD_NAME:-codex-pod}"
+IMAGE="${RUNPOD_CODEX_IMAGE:-runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04}"
+DISK_GB="${RUNPOD_CODEX_DISK:-20}"
+LOCAL_PORT="${RUNPOD_CODEX_LOCAL_PORT:-11434}"
+TUNNEL_PORT="${RUNPOD_CODEX_TUNNEL_PORT:-11435}"
+IDLE_MIN="${RUNPOD_CODEX_IDLE_MIN:-5}"
+TUNNEL_SESSION="${RUNPOD_CODEX_TUNNEL:-ollama-tunnel}"
+PROXY_SESSION="${RUNPOD_CODEX_PROXY_SESSION:-codex-proxy}"
+IDLE_SESSION="${RUNPOD_CODEX_IDLE_SESSION:-codex-idle}"
+PROXY_SCRIPT="${RUNPOD_CODEX_PROXY_SCRIPT:-/home/tj/gpu-runner/runpod-codex-proxy.py}"
+STATE_FILE="${RUNPOD_CODEX_STATE:-$HOME/.runpod-codex.state}"
+
+API="https://rest.runpod.io/v1"
+
+# ----- Helpers -----
+need_key() { [[ -n "$RUNPOD_API_KEY" ]] || { echo "RUNPOD_API_KEY missing (set env or pass api/runpod-claude)"; exit 1; }; }
+
+api() {
+    local method="$1" path="$2" data="${3:-}"
+    if [[ -n "$data" ]]; then
+        curl -s -X "$method" -H "Authorization: Bearer $RUNPOD_API_KEY" -H "Content-Type: application/json" -d "$data" "${API}${path}"
+    else
+        curl -s -X "$method" -H "Authorization: Bearer $RUNPOD_API_KEY" "${API}${path}"
+    fi
+}
+
+save_state() {
+    cat > "$STATE_FILE" <<EOF
+POD_ID=$1
+IP=$2
+SSH_PORT=$3
+EOF
+}
+
+load_state() {
+    [[ -f "$STATE_FILE" ]] || return 1
+    # shellcheck source=/dev/null
+    source "$STATE_FILE"
+    [[ -n "${POD_ID:-}" ]]
+}
+
+clear_state() { rm -f "$STATE_FILE"; }
+
+pod_info() {
+    [[ -n "${1:-}" ]] || return 1
+    api GET "/pods/$1"
+}
+
+pod_running() {
+    local info status
+    info="$(pod_info "$1")"
+    status="$(echo "$info" | python3 -c 'import sys,json; print(json.loads(sys.stdin.read()).get("desiredStatus",""))' 2>/dev/null || echo '')"
+    [[ "$status" == "RUNNING" ]]
+}
+
+ssh_pod() {
+    load_state || { echo "no pod state"; return 1; }
+    ssh -i "$SSH_KEY" -p "$SSH_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 root@"$IP" "$@"
+}
+
+bootstrap_pod() {
+    # Idempotent: install ollama into /workspace if absent, start serve as bg daemon, pull model if absent.
+    # Writes a remote bootstrap script + runs it via ssh, so logic is more robust than a heredoc.
+    local remote_script
+    remote_script="$(cat <<'BOOT'
+log()  { echo "[bootstrap] $*"; }
+
+mkdir -p /workspace/ollama-bin /workspace/ollama-data
+
+# Only install zstd + download ollama on first-ever bootstrap (saves ~10s on warm restarts).
+if [ ! -x /workspace/ollama-bin/bin/ollama ]; then
+    if ! command -v zstd >/dev/null 2>&1; then
+        log "installing zstd (first run only)..."
+        apt-get update -qq >/dev/null 2>&1
+        apt-get install -y -qq zstd >/dev/null 2>&1 || { log "apt install zstd failed"; exit 1; }
+    fi
+    log "downloading ollama into /workspace (first run only)..."
+    cd /tmp
+    curl -fsSL https://github.com/ollama/ollama/releases/download/v0.22.0/ollama-linux-amd64.tar.zst -o ollama.tar.zst || { log "ollama download failed"; exit 1; }
+    zstd -d ollama.tar.zst -o ollama.tar
+    tar -xf ollama.tar -C /workspace/ollama-bin
+    rm -f ollama.tar ollama.tar.zst
+fi
+ln -sf /workspace/ollama-bin/bin/ollama /usr/local/bin/ollama
+
+# Use the API itself as proof Ollama is running; pgrep -f matches the ssh cmdline (false +).
+if curl -s --max-time 3 http://localhost:11434/api/tags >/dev/null 2>&1; then
+    log "ollama already serving"
+else
+    log "starting ollama serve..."
+    rm -f /tmp/ollama.log
+    cat > /tmp/start-ollama.sh <<'OLLSH'
+#!/bin/bash
+export OLLAMA_HOST=0.0.0.0:11434
+export OLLAMA_CONTEXT_LENGTH=32768
+export OLLAMA_MODELS=/workspace/ollama-data/models
+exec /workspace/ollama-bin/bin/ollama serve
+OLLSH
+    chmod +x /tmp/start-ollama.sh
+    setsid /tmp/start-ollama.sh </dev/null >/tmp/ollama.log 2>&1 &
+    disown
+    for i in $(seq 1 30); do
+        curl -s --max-time 3 http://localhost:11434/api/tags >/dev/null 2>&1 && break
+        sleep 2
+    done
+    if ! curl -s --max-time 3 http://localhost:11434/api/tags >/dev/null 2>&1; then
+        log "ollama serve failed; tail of log:"
+        tail -20 /tmp/ollama.log 2>&1
+        exit 1
+    fi
+fi
+
+if curl -s http://localhost:11434/api/tags | grep -q "__MODEL__" 2>/dev/null; then
+    log "model already on volume"
+else
+    log "starting model pull (~18GB)..."
+    rm -f /tmp/pull.log
+    cat > /tmp/start-pull.sh <<PULLSH
+#!/bin/bash
+export OLLAMA_MODELS=/workspace/ollama-data/models
+exec /workspace/ollama-bin/bin/ollama pull "__MODEL__"
+PULLSH
+    sed -i "s|__MODEL__|__MODEL__|g" /tmp/start-pull.sh
+    chmod +x /tmp/start-pull.sh
+    setsid /tmp/start-pull.sh </dev/null >/tmp/pull.log 2>&1 &
+    disown
+fi
+log "done"
+BOOT
+)"
+    # substitute MODEL into the script
+    remote_script="${remote_script//__MODEL__/$MODEL}"
+    ssh_pod 'cat > /tmp/bootstrap.sh && bash /tmp/bootstrap.sh' <<<"$remote_script"
+}
+
+wait_model_ready() {
+    # Wait until the model appears in /api/tags (i.e. pull completed).
+    local until_ts=$((SECONDS + ${1:-600}))
+    while (( SECONDS < until_ts )); do
+        if curl -s --max-time 4 "http://localhost:${LOCAL_PORT}/api/tags" 2>/dev/null | grep -q "$MODEL"; then
+            return 0
+        fi
+        sleep 5
+    done
+    return 1
+}
+
+ensure_tunnel() {
+    # SSH tunnel runs on TUNNEL_PORT (11435). The proxy on LOCAL_PORT (11434) forwards to it.
+    load_state || { echo "no pod state — run 'start' first"; return 1; }
+    if curl -s --max-time 3 "http://127.0.0.1:${TUNNEL_PORT}/api/tags" > /dev/null 2>&1; then
+        return 0
+    fi
+    tmux kill-session -t "$TUNNEL_SESSION" 2>/dev/null || true
+    tmux new-session -d -s "$TUNNEL_SESSION" "ssh -i $SSH_KEY -p $SSH_PORT -N -L 127.0.0.1:${TUNNEL_PORT}:127.0.0.1:11434 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 root@$IP"
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        if curl -s --max-time 3 "http://127.0.0.1:${TUNNEL_PORT}/api/tags" > /dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo "tunnel did not come up"; return 1
+}
+
+ensure_proxy() {
+    # Proxy stays alive across stop/start cycles so codex can transparently auto-resume.
+    if tmux has-session -t "$PROXY_SESSION" 2>/dev/null; then
+        return 0
+    fi
+    [[ -x "$PROXY_SCRIPT" ]] || chmod +x "$PROXY_SCRIPT" 2>/dev/null
+    tmux new-session -d -s "$PROXY_SESSION" "RUNPOD_PROXY_PORT=$LOCAL_PORT RUNPOD_UPSTREAM_PORT=$TUNNEL_PORT RUNPOD_CMD=$0 python3 $PROXY_SCRIPT 2>&1 | tee /tmp/runpod-codex-proxy.log"
+    local i
+    for i in 1 2 3 4 5; do
+        if ss -tln 2>/dev/null | grep -q ":${LOCAL_PORT}\b"; then return 0; fi
+        sleep 1
+    done
+    echo "proxy did not start; check /tmp/runpod-codex-proxy.log"; return 1
+}
+
+wait_for_ssh() {
+    local until_ts=$((SECONDS + 300))
+    while (( SECONDS < until_ts )); do
+        if ssh -i "$SSH_KEY" -p "$SSH_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=4 -o BatchMode=yes root@"$IP" 'echo OK' > /dev/null 2>&1; then
+            return 0
+        fi
+        sleep 3
+    done
+    echo "SSH never ready (IP=$IP PORT=$SSH_PORT)"; return 1
+}
+
+wait_for_ports() {
+    # Wait for the pod's public IP + SSH port mapping AND for SSH to actually accept connections.
+    # On stop/start RunPod may briefly return a stale port; verify before returning.
+    local pod_id="$1"
+    local until_ts=$((SECONDS + 300))
+    local ip port
+    while (( SECONDS < until_ts )); do
+        local info
+        info="$(pod_info "$pod_id")"
+        ip="$(echo "$info" | python3 -c 'import sys,json; print(json.loads(sys.stdin.read()).get("publicIp",""))' 2>/dev/null || echo '')"
+        port="$(echo "$info" | python3 -c 'import sys,json; print(json.loads(sys.stdin.read()).get("portMappings",{}).get("22",""))' 2>/dev/null || echo '')"
+        if [[ -n "$ip" && -n "$port" ]]; then
+            if ssh -i "$SSH_KEY" -p "$port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=4 -o BatchMode=yes root@"$ip" 'echo OK' > /dev/null 2>&1; then
+                echo "$ip $port"
+                return 0
+            fi
+        fi
+        sleep 4
+    done
+    echo "ports/SSH not ready" >&2; return 1
+}
+
+# ----- Subcommands -----
+cmd_start() {
+    need_key
+    local existing_pod=""
+    if load_state; then existing_pod="$POD_ID"; fi
+
+    if [[ -n "$existing_pod" ]]; then
+        local info status
+        info="$(pod_info "$existing_pod")"
+        status="$(echo "$info" | python3 -c 'import sys,json; print(json.loads(sys.stdin.read()).get("desiredStatus",""))' 2>/dev/null || echo '')"
+        if [[ "$status" == "EXITED" || "$status" == "STOPPED" ]]; then
+            echo "Resuming pod $existing_pod..."
+            local resp
+            resp="$(api POST "/pods/$existing_pod/start")"
+            if echo "$resp" | grep -qi 'error'; then
+                echo "Resume failed:"; echo "$resp" | python3 -m json.tool 2>/dev/null || echo "$resp"
+                echo "Falling through to create a new pod (volume contents preserved)."
+                clear_state
+                existing_pod=""
+            fi
+        fi
+    fi
+
+    if [[ -z "$existing_pod" ]]; then
+        echo "Creating new pod attached to volume $VOLUME_ID..."
+        local body
+        body="$(python3 -c "
+import json
+print(json.dumps({
+    'name': '$POD_NAME',
+    'imageName': '$IMAGE',
+    'gpuTypeIds': $GPU_TYPES_JSON,
+    'gpuCount': 1,
+    'containerDiskInGb': $DISK_GB,
+    'ports': ['22/tcp', '11434/http'],
+    'networkVolumeId': '$VOLUME_ID',
+    'env': {'PUBLIC_KEY': '''$SSH_PUB_KEY'''}
+}))")"
+        local resp pod_id
+        resp="$(api POST "/pods" "$body")"
+        pod_id="$(echo "$resp" | python3 -c 'import sys,json; print(json.loads(sys.stdin.read()).get("id",""))' 2>/dev/null || echo '')"
+        if [[ -z "$pod_id" ]]; then
+            echo "Pod creation failed:"; echo "$resp" | python3 -m json.tool 2>/dev/null || echo "$resp"; return 1
+        fi
+        existing_pod="$pod_id"
+    fi
+
+    echo "Waiting for pod $existing_pod to expose SSH..."
+    local out
+    out="$(wait_for_ports "$existing_pod")"
+    IP="$(echo "$out" | awk '{print $1}')"
+    SSH_PORT="$(echo "$out" | awk '{print $2}')"
+    POD_ID="$existing_pod"
+    save_state "$POD_ID" "$IP" "$SSH_PORT"
+    echo "Bootstrapping pod (idempotent)..."
+    bootstrap_pod
+    ensure_tunnel
+    ensure_proxy
+    if curl -s "http://127.0.0.1:${TUNNEL_PORT}/api/tags" 2>/dev/null | grep -q "$MODEL"; then
+        echo "Model on volume, ready."
+    else
+        echo "Model pull running; polling..."
+        wait_model_ready 900 || { echo "model pull did not complete in 15min — check 'runpod-codex logs pull'"; return 1; }
+        echo "Model ready."
+    fi
+    # Auto-start idle-watch unless explicitly disabled — prevents accidental $/hr drain.
+    if [[ "${RUNPOD_CODEX_NO_IDLE_WATCH:-}" != "1" ]] && ! tmux has-session -t "$IDLE_SESSION" 2>/dev/null; then
+        cmd_idle_watch
+    fi
+    echo "Ready: localhost:${LOCAL_PORT} (proxy) -> 127.0.0.1:${TUNNEL_PORT} (ssh) -> ${IP}:${SSH_PORT}:11434 (pod $POD_ID)"
+}
+
+cmd_stop() {
+    need_key
+    load_state || { echo "no pod state"; return 1; }
+    echo "Stopping pod $POD_ID..."
+    api POST "/pods/$POD_ID/stop" > /dev/null
+    tmux kill-session -t "$TUNNEL_SESSION" 2>/dev/null || true
+    tmux kill-session -t "$IDLE_SESSION" 2>/dev/null || true
+    # NOTE: keep proxy alive so codex transparently triggers a restart on next request.
+    echo "Stopped. Volume contents preserved. Proxy still listening on :${LOCAL_PORT} for auto-resume."
+}
+
+cmd_kill() {
+    need_key
+    load_state || { echo "no pod state"; return 0; }
+    local kill_volume=0
+    [[ "${1:-}" == "--all" ]] && kill_volume=1
+    echo "Deleting pod $POD_ID..."
+    api DELETE "/pods/$POD_ID" > /dev/null || true
+    tmux kill-session -t "$TUNNEL_SESSION" 2>/dev/null || true
+    tmux kill-session -t "$PROXY_SESSION" 2>/dev/null || true
+    tmux kill-session -t "$IDLE_SESSION" 2>/dev/null || true
+    clear_state
+    if (( kill_volume )); then
+        echo "Deleting volume $VOLUME_ID..."
+        api DELETE "/networkvolumes/$VOLUME_ID" > /dev/null || true
+        echo "Volume deleted. Update RUNPOD_CODEX_VOLUME for next 'start'."
+    fi
+    echo "Done."
+}
+
+cmd_status() {
+    if ! load_state; then
+        echo "No pod state file. Use 'start' to provision."
+    else
+        local info
+        info="$(pod_info "$POD_ID")"
+        echo "$info" | python3 -c "
+import sys, json
+d = json.loads(sys.stdin.read())
+m = d.get('machine') or {}
+print(f\"pod:        {d.get('id')}\")
+print(f\"name:       {d.get('name')}\")
+print(f\"status:     {d.get('desiredStatus')}\")
+print(f\"gpu:        {m.get('gpuTypeId') or m.get('gpuTypeIds') or '-'}\")
+print(f\"dc:         {m.get('dataCenterId') or '-'}\")
+print(f\"cost/hr:    \${d.get('costPerHr')}\")
+print(f\"public ip:  {d.get('publicIp') or '-'}\")
+print(f\"ssh port:   {d.get('portMappings',{}).get('22') or '-'}\")
+"
+    fi
+    echo "---"
+    if tmux has-session -t "$PROXY_SESSION" 2>/dev/null; then
+        echo "proxy:      UP (localhost:${LOCAL_PORT})"
+    else
+        echo "proxy:      inactive"
+    fi
+    if curl -s --max-time 3 "http://127.0.0.1:${TUNNEL_PORT}/api/tags" > /dev/null 2>&1; then
+        echo "tunnel:     UP (127.0.0.1:${TUNNEL_PORT})"
+        local mload
+        mload="$(curl -s "http://127.0.0.1:${TUNNEL_PORT}/api/ps" 2>/dev/null | python3 -c 'import sys,json; m=json.loads(sys.stdin.read())["models"]; print(",".join(x["name"] for x in m) if m else "<no model loaded>")' 2>/dev/null)"
+        echo "loaded:     $mload"
+    else
+        echo "tunnel:     DOWN"
+    fi
+    if tmux has-session -t "$IDLE_SESSION" 2>/dev/null; then
+        echo "idle-watch: ACTIVE (tmux: $IDLE_SESSION)"
+    else
+        echo "idle-watch: inactive"
+    fi
+    echo "---"
+    if [[ -n "$RUNPOD_API_KEY" ]]; then
+        local bal
+        bal="$(curl -s "https://api.runpod.io/graphql" -H "Authorization: Bearer $RUNPOD_API_KEY" -H "Content-Type: application/json" -d '{"query":"{ myself { clientBalance currentSpendPerHr } }"}' | python3 -c "
+import sys, json
+try:
+    r = json.loads(sys.stdin.read())['data']['myself']
+    print(f\"\${r['clientBalance']:.2f} balance, \${r['currentSpendPerHr']:.4f}/hr\")
+except Exception as e:
+    print(f'(balance lookup failed: {e})')
+" 2>/dev/null)"
+        echo "account:    $bal"
+    fi
+}
+
+cmd_tunnel() {
+    ensure_tunnel
+}
+
+cmd_idle_watch() {
+    # Start an idle-watch daemon in a tmux session that polls Ollama
+    # and stops the pod after IDLE_MIN minutes with no model loaded.
+    local script="$0"
+    if [[ "${1:-}" == "--inline" ]]; then
+        # Inline-mode loop (run inside tmux). Poll the SSH tunnel directly,
+        # not the proxy, so we don't trigger the auto-start during idle checks.
+        local last_active idle_secs resp
+        last_active=$(date +%s)
+        echo "[idle-watch] starting; idle threshold=${IDLE_MIN}min"
+        while true; do
+            resp="$(curl -s --max-time 5 http://127.0.0.1:${TUNNEL_PORT}/api/ps 2>/dev/null || echo '')"
+            if [[ -n "$resp" ]] && echo "$resp" | python3 -c 'import sys,json; m=json.loads(sys.stdin.read())["models"]; sys.exit(0 if m else 1)' 2>/dev/null; then
+                last_active=$(date +%s)
+            fi
+            idle_secs=$(( $(date +%s) - last_active ))
+            if (( idle_secs > IDLE_MIN * 60 )); then
+                echo "[idle-watch] idle ${idle_secs}s > ${IDLE_MIN}min; stopping pod."
+                "$script" stop
+                exit 0
+            fi
+            sleep 60
+        done
+    fi
+    if tmux has-session -t "$IDLE_SESSION" 2>/dev/null; then
+        echo "Idle-watch already active (tmux: $IDLE_SESSION). Use 'idle-watch-stop' to cancel."
+        return 0
+    fi
+    tmux new-session -d -s "$IDLE_SESSION" "RUNPOD_CODEX_IDLE_MIN=$IDLE_MIN $script idle-watch --inline 2>&1 | tee /tmp/runpod-codex-idle.log"
+    echo "Idle-watch started (tmux: $IDLE_SESSION). Threshold: ${IDLE_MIN}min."
+}
+
+cmd_idle_watch_stop() {
+    tmux kill-session -t "$IDLE_SESSION" 2>/dev/null && echo "idle-watch stopped" || echo "no idle-watch active"
+}
+
+cmd_codex() {
+    # Don't ensure tunnel/pod here — the proxy will auto-start on first request.
+    # Just make sure the proxy is up so codex can connect to LOCAL_PORT.
+    ensure_proxy
+    cd "${PWD:-/tmp}"
+    exec codex --oss --dangerously-bypass-approvals-and-sandbox -m "$MODEL" "$@"
+}
+
+cmd_resume() {
+    # Resume the most recent codex session (no picker). Useful after a tmux restart.
+    ensure_proxy
+    cd "${PWD:-/tmp}"
+    exec codex --oss --dangerously-bypass-approvals-and-sandbox -m "$MODEL" resume --last "$@"
+}
+
+cmd_sessions() {
+    # List recent codex sessions. Use 'runpod-codex resume' to continue the most recent.
+    local n="${1:-10}"
+    find ~/.codex/sessions -name 'rollout-*.jsonl' -printf '%T@ %p\n' 2>/dev/null \
+        | sort -rn | head -"$n" | while read -r ts f; do
+        local mtime first_msg
+        mtime="$(date -d "@${ts%.*}" +'%Y-%m-%d %H:%M' 2>/dev/null)"
+        first_msg="$(grep -m1 '"role":"user"' "$f" 2>/dev/null | python3 -c "
+import sys, json
+try:
+    o = json.loads(sys.stdin.read())
+    c = o.get('content') or o.get('payload',{}).get('content') or []
+    if isinstance(c, list) and c:
+        text = c[0].get('text') or c[0].get('input_text') or ''
+    elif isinstance(c, str):
+        text = c
+    else:
+        text = ''
+    print(text.replace(chr(10), ' ')[:80])
+except: print('')
+" 2>/dev/null)"
+        printf "%s  %s\n   ↳ %s\n" "$mtime" "$f" "$first_msg"
+    done
+}
+
+cmd_logs() {
+    local what="${1:-ollama}"
+    case "$what" in
+        ollama|pull)
+            ssh_pod "tail -200 /tmp/${what}.log 2>/dev/null || echo 'no log'"
+            ;;
+        idle)
+            cat /tmp/runpod-codex-idle.log 2>/dev/null || echo 'no log'
+            ;;
+        proxy)
+            cat /tmp/runpod-codex-proxy.log 2>/dev/null || echo 'no log'
+            ;;
+        *)
+            echo "Unknown log: $what (try ollama|pull|idle|proxy)"
+            ;;
+    esac
+}
+
+usage() {
+    cat <<USAGE
+runpod-codex — manage a RunPod pod for Codex CLI
+
+Usage: runpod-codex <subcommand> [args]
+
+Subcommands:
+  start                  Provision/resume pod, bootstrap, ensure tunnel + proxy ready.
+  stop                   Stop pod (compute off, volume kept). Keeps proxy alive for auto-resume.
+  kill [--all]           Delete pod + tunnel + proxy. --all also deletes the network volume.
+  status                 Show pod, tunnel, proxy, idle-watch, balance.
+  tunnel                 Ensure SSH tunnel up (127.0.0.1:${TUNNEL_PORT}).
+  idle-watch             Background daemon: stop pod after \$RUNPOD_CODEX_IDLE_MIN min idle.
+  idle-watch-stop        Stop the idle-watch daemon.
+  codex [args...]        Run codex against the pod (auto-resumes pod if paused).
+  resume                 Resume the most recent codex session (no picker).
+  sessions [N]           List the N most recent codex sessions.
+  logs <ollama|pull|idle|proxy>  Tail relevant log.
+
+Config (env vars, defaults shown):
+  RUNPOD_CODEX_MODEL=$MODEL
+  RUNPOD_CODEX_VOLUME=$VOLUME_ID    (network volume ID, $DATACENTER)
+  RUNPOD_CODEX_DC=$DATACENTER
+  RUNPOD_CODEX_GPU=$GPU_TYPES_JSON
+  RUNPOD_CODEX_DISK=$DISK_GB        (container disk GB; volume is separate)
+  RUNPOD_CODEX_LOCAL_PORT=$LOCAL_PORT
+  RUNPOD_CODEX_IDLE_MIN=$IDLE_MIN
+USAGE
+}
+
+case "${1:-status}" in
+    start)            shift; cmd_start "$@" ;;
+    stop|pause)       shift; cmd_stop "$@" ;;
+    kill)             shift; cmd_kill "$@" ;;
+    status)           shift; cmd_status "$@" ;;
+    tunnel)           shift; cmd_tunnel "$@" ;;
+    idle-watch)       shift; cmd_idle_watch "$@" ;;
+    idle-watch-stop)  shift; cmd_idle_watch_stop "$@" ;;
+    codex)            shift; cmd_codex "$@" ;;
+    resume)           shift; cmd_resume "$@" ;;
+    sessions)         shift; cmd_sessions "$@" ;;
+    logs)             shift; cmd_logs "$@" ;;
+    -h|--help|help)   usage ;;
+    *)                usage; exit 1 ;;
+esac

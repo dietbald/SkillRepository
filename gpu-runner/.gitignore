@@ -1,0 +1,25 @@
+# Transient debug logs (recreated by bench scripts)
+bench/*.log
+bench/eval-*.log
+bench/c[0-9]-*.log
+bench/gemma4-test*.log
+bench/heretic-test*.log
+bench/bake-*.log
+bench/ollama-run*.log
+bench/setup-eval.log
+
+# Generated benchmark outputs
+bench/zimage-logos/
+bench/eval-output.txt
+bench/eval-results.json
+bench/test_results/
+
+# OCR/audio test outputs
+test-files/ocr-output/
+
+# Local state
+.runpod-codex.state
+gpu-runner-instance.state
+*.pyc
+__pycache__/
+.DS_Store

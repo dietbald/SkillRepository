@@ -1,0 +1,250 @@
+#!/bin/bash
+# freemodel — Launch / resume an AWS GPU instance running an uncensored
+# Gemma 4 26B-A4B model (TrevorJS/gemma-4-26B-A4B-it-uncensored Q4_K_M)
+# and drop into an interactive `ollama run` REPL.
+#
+# Lifecycle (3 states):
+#   - none           no instance, no EBS              cost: $3.50/mo (snapshot only)
+#   - stopped        instance stopped, EBS preserved  cost: $13/mo + snapshot   (warm restart ~60s)
+#   - running        instance up, ollama loaded       cost: $1.21/hr g5.xlarge
+#
+#   freemodel              → if running: reuse; if stopped: start (~60s); else launch (~8min cold)
+#                            then attach REPL
+#   freemodel --no-attach  → same launch/resume but exit instead of attaching
+#   freemodel --pause      → stop instance, keep EBS (warm restart later)
+#   freemodel --kill       → terminate instance, drop EBS  (full teardown)
+#   freemodel --status     → show what state the instance is in
+#   freemodel --type X     → override default $CHAT_INSTANCE_TYPE for a fresh launch
+#
+# State file: /tmp/freemodel.state — survives across stop/start cycles.
+
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/config.env"
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+log()  { echo -e "${BLUE}[freemodel]${NC} $*"; }
+ok()   { echo -e "${GREEN}[freemodel]${NC} $*"; }
+warn() { echo -e "${YELLOW}[freemodel]${NC} $*"; }
+err()  { echo -e "${RED}[freemodel]${NC} $*" >&2; exit 1; }
+
+STATE=/tmp/freemodel.state
+ITYPE="${CHAT_INSTANCE_TYPE:-g5.xlarge}"
+MODEL="${CHAT_MODEL:-trevor-26b-a4b-q4km}"
+ACTION=launch
+AUTO_ATTACH=true
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --type)            ITYPE="$2"; shift 2 ;;
+    --no-attach)       AUTO_ATTACH=false; shift ;;
+    --status|status)   ACTION=status; shift ;;
+    --pause|pause)     ACTION=pause;  shift ;;
+    --kill|kill)       ACTION=kill;   shift ;;
+    --help|-h)         ACTION=help;   shift ;;
+    *)                 warn "Ignoring unknown arg: $1"; shift ;;
+  esac
+done
+
+SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -i "$KEY_PATH")
+
+# Returns the EC2 state name (running/stopped/stopping/pending/terminated/...) or empty.
+instance_state() {
+  [ -f "$STATE" ] || { echo ""; return; }
+  source "$STATE"
+  aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+    --query 'Reservations[0].Instances[0].State.Name' --output text \
+    --region "$AWS_REGION" 2>/dev/null || echo ""
+}
+
+# Refresh PUBLIC_IP from AWS (changes after stop/start without an EIP) and rewrite STATE.
+refresh_ip() {
+  source "$STATE"
+  PUBLIC_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$AWS_REGION" \
+    --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+  {
+    echo "INSTANCE_ID=$INSTANCE_ID"
+    echo "PUBLIC_IP=$PUBLIC_IP"
+    echo "INSTANCE_TYPE=$INSTANCE_TYPE"
+  } > "$STATE"
+}
+
+wait_ssh() {
+  local ip="$1"
+  for i in $(seq 1 60); do
+    ssh "${SSH_OPTS[@]}" -o BatchMode=yes ubuntu@"$ip" "echo ok" >/dev/null 2>&1 && return 0
+    sleep 5
+  done
+  return 1
+}
+
+wait_ollama() {
+  local ip="$1"
+  for i in $(seq 1 30); do
+    ssh "${SSH_OPTS[@]}" ubuntu@"$ip" "curl -fsS http://127.0.0.1:11434/api/tags >/dev/null" 2>/dev/null && return 0
+    sleep 2
+  done
+  return 1
+}
+
+warm_model() {
+  ssh "${SSH_OPTS[@]}" ubuntu@"$1" "echo 'warm' | ollama run '$MODEL' >/dev/null 2>&1" || true
+}
+
+# ── subcommands ────────────────────────────────────────────────────────────
+case "$ACTION" in
+  help)
+    sed -n '2,22p' "$0" | sed 's/^# \?//'
+    exit 0
+    ;;
+
+  status)
+    s=$(instance_state)
+    if [ -z "$s" ] || [ "$s" = "terminated" ] || [ "$s" = "None" ]; then
+      warn "No freemodel instance (state=${s:-none})."
+      [ -f "$STATE" ] && rm -f "$STATE"
+    else
+      source "$STATE"
+      ok  "freemodel instance: $INSTANCE_ID  ($INSTANCE_TYPE)  state=$s"
+      if [ "$s" = "running" ]; then
+        ok  "Public IP: $PUBLIC_IP"
+        log "Resume:    freemodel"
+        log "Attach:    ssh -i $KEY_PATH ubuntu@$PUBLIC_IP \"ollama run $MODEL\""
+        log "API:       ssh -L 11434:127.0.0.1:11434 -i $KEY_PATH ubuntu@$PUBLIC_IP"
+        log "Pause:     freemodel --pause   (stops the instance, keeps EBS ~\$13/mo)"
+        log "Terminate: freemodel --kill    (full teardown, snapshot only ~\$3.50/mo)"
+      elif [ "$s" = "stopped" ]; then
+        log "Resume:    freemodel           (~60s warm restart)"
+        log "Terminate: freemodel --kill"
+      else
+        log "Wait for state to settle, then re-run --status"
+      fi
+    fi
+    exit 0
+    ;;
+
+  pause)
+    s=$(instance_state)
+    if [ -z "$s" ] || [ "$s" = "terminated" ]; then
+      warn "No running freemodel instance to pause."
+      exit 0
+    fi
+    if [ "$s" = "stopped" ] || [ "$s" = "stopping" ]; then
+      ok "Already $s."
+      exit 0
+    fi
+    source "$STATE"
+    log "Stopping $INSTANCE_ID (instance preserved, EBS billing continues ~\$9.60/mo)..."
+    aws ec2 stop-instances --instance-ids "$INSTANCE_ID" --region "$AWS_REGION" >/dev/null
+    ok "Stop requested. Resume with: freemodel"
+    exit 0
+    ;;
+
+  kill)
+    if [ ! -f "$STATE" ]; then
+      warn "No freemodel instance recorded."
+      exit 0
+    fi
+    source "$STATE"
+    log "Terminating $INSTANCE_ID (full teardown — EBS dropped, only snapshot \$3.50/mo remains)..."
+    aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --region "$AWS_REGION" >/dev/null
+    rm -f "$STATE"
+    ok "Done."
+    exit 0
+    ;;
+esac
+
+# ── launch / resume path ───────────────────────────────────────────────────
+[ -z "${CHAT_AMI:-}" ] && err "CHAT_AMI not set in config.env. Build it first: bash bench/bake-freemodel-ami.sh"
+
+s=$(instance_state)
+
+if [ "$s" = "running" ]; then
+  source "$STATE"
+  if ssh "${SSH_OPTS[@]}" -o BatchMode=yes ubuntu@"$PUBLIC_IP" "echo ok" >/dev/null 2>&1; then
+    ok "Reusing running instance $INSTANCE_ID @ $PUBLIC_IP"
+  else
+    warn "Public IP may have changed — refreshing..."
+    refresh_ip
+    wait_ssh "$PUBLIC_IP" || err "Cannot SSH to $PUBLIC_IP"
+    ok "Reconnected: $INSTANCE_ID @ $PUBLIC_IP"
+  fi
+
+elif [ "$s" = "stopped" ]; then
+  source "$STATE"
+  log "Resuming stopped instance $INSTANCE_ID (warm start ~60s)..."
+  aws ec2 start-instances --instance-ids "$INSTANCE_ID" --region "$AWS_REGION" >/dev/null
+  aws ec2 wait instance-running --instance-ids "$INSTANCE_ID" --region "$AWS_REGION"
+  refresh_ip
+  log "IP: $PUBLIC_IP — waiting for SSH..."
+  wait_ssh "$PUBLIC_IP" || err "SSH never came up"
+  log "Waiting for ollama API..."
+  wait_ollama "$PUBLIC_IP" || warn "ollama API slow — continuing"
+  log "Re-warming $MODEL onto GPU..."
+  warm_model "$PUBLIC_IP"
+  ok "freemodel resumed: $INSTANCE_ID @ $PUBLIC_IP"
+
+elif [ "$s" = "stopping" ] || [ "$s" = "pending" ] || [ "$s" = "shutting-down" ]; then
+  err "Instance is in transitional state '$s' — wait a bit and retry"
+
+else
+  # No instance, or terminated. Fresh launch from CHAT_AMI.
+  [ -f "$STATE" ] && rm -f "$STATE"
+  # NB: g4dn.* deliberately excluded — T4 has 16 GB VRAM, model is 17.6 GB → OOM.
+  CANDIDATES=("$ITYPE" g5.2xlarge g5.xlarge g6.2xlarge g6.xlarge)
+  SEEN=""; FALLBACKS=()
+  for c in "${CANDIDATES[@]}"; do
+    [[ ":$SEEN:" == *":$c:"* ]] && continue
+    SEEN="$SEEN:$c"; FALLBACKS+=("$c")
+  done
+
+  INSTANCE_ID=""
+  for cand in "${FALLBACKS[@]}"; do
+    log "Launching $cand on-demand from $CHAT_AMI..."
+    INSTANCE_ID=$(aws ec2 run-instances \
+      --image-id "$CHAT_AMI" \
+      --instance-type "$cand" \
+      --key-name "$KEY_NAME" \
+      --security-group-ids "$SECURITY_GROUP" \
+      --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=freemodel},{Key=ManagedBy,Value=gpu-task},{Key=Purpose,Value=freemodel-chat}]' \
+      --query 'Instances[0].InstanceId' --output text \
+      --region "$AWS_REGION" 2>/dev/null) || INSTANCE_ID=""
+    if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
+      ITYPE="$cand"; ok "Got $cand"; break
+    fi
+    INSTANCE_ID=""
+    warn "  $cand denied (capacity/quota), trying next..."
+  done
+  [ -z "$INSTANCE_ID" ] && err "All candidates denied — try later or request a quota bump"
+  log "Instance: $INSTANCE_ID — waiting for running state..."
+  aws ec2 wait instance-running --instance-ids "$INSTANCE_ID" --region "$AWS_REGION"
+  PUBLIC_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$AWS_REGION" \
+    --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+  log "IP: $PUBLIC_IP — waiting for SSH (cold start: ~5–8 min for EBS hydration)..."
+  wait_ssh "$PUBLIC_IP" || err "SSH never came up"
+  log "Waiting for ollama API..."
+  wait_ollama "$PUBLIC_IP" || warn "ollama API slow — continuing"
+  log "Loading $MODEL onto GPU (this is the slow first-read; ~5 min on cold EBS)..."
+  warm_model "$PUBLIC_IP"
+  {
+    echo "INSTANCE_ID=$INSTANCE_ID"
+    echo "PUBLIC_IP=$PUBLIC_IP"
+    echo "INSTANCE_TYPE=$ITYPE"
+  } > "$STATE"
+  ok "freemodel ready: $INSTANCE_ID @ $PUBLIC_IP"
+fi
+
+# ── attach or print connect info ───────────────────────────────────────────
+if $AUTO_ATTACH; then
+  source "$STATE"
+  ok  "Entering '$MODEL' REPL — type /bye or Ctrl-D to exit."
+  warn "Exiting the REPL does NOT pause/terminate the instance (\$1.21/hr while running)."
+  warn "When done:  freemodel --pause   (warm restart \$13/mo idle)"
+  warn "Or full:    freemodel --kill    (\$3.50/mo snapshot only)"
+  exec ssh -t "${SSH_OPTS[@]}" ubuntu@"$PUBLIC_IP" "ollama run '$MODEL'"
+else
+  ok "Connect:    ssh -i $KEY_PATH ubuntu@$PUBLIC_IP \"ollama run $MODEL\""
+  ok "API tunnel: ssh -L 11434:127.0.0.1:11434 -i $KEY_PATH ubuntu@$PUBLIC_IP"
+  ok "Pause:      freemodel --pause"
+  ok "Terminate:  freemodel --kill"
+fi
