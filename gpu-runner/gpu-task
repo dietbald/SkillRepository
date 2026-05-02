@@ -65,7 +65,7 @@ ensure_warm() {
   fi
 
   log "No warm instance — starting one (~90s, then all future jobs are instant)..."
-  INFO=$(bash "$SCRIPT_DIR/lib/launch.sh" 2>&1) || INFO=$(bash "$SCRIPT_DIR/lib/launch.sh" --ondemand 2>&1)
+  INFO=$(bash "$SCRIPT_DIR/lib/launch.sh" --ondemand 2>&1)
   INSTANCE_ID=$(echo "$INFO" | grep '^{' | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["instance_id"])')
   PUBLIC_IP=$(echo  "$INFO" | grep '^{' | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["public_ip"])')
   echo "INSTANCE_ID=$INSTANCE_ID" > /tmp/gpu-runner-instance.state
@@ -75,7 +75,6 @@ ensure_warm() {
   scp $SSH_OPTS "$SCRIPT_DIR/lib/queue-server.sh" ubuntu@"$PUBLIC_IP":~/queue-server.sh >/dev/null
   ssh $SSH_OPTS ubuntu@"$PUBLIC_IP" \
     "chmod +x ~/queue-server.sh && mkdir -p ~/queue ~/output ~/done && \
-     tmux new-session -d -s queue 'exec ~/queue-server.sh' 2>/dev/null || \
      tmux kill-session -t queue 2>/dev/null; tmux new-session -d -s queue 'exec ~/queue-server.sh'" >/dev/null
   sleep 1
   ok "Warm instance ready: $INSTANCE_ID @ $PUBLIC_IP (auto-terminates after 300s idle)"
