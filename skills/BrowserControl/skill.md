@@ -336,6 +336,28 @@ await Promise.all([
 
 When you can't tell which image-src corresponds to which label, dump the page HTML once (`fs.writeFileSync('page.html', await page.content())`) and grep for the visible label — the surrounding `<img src="…">` tells you the URL fragment to filter on.
 
+**The `ctl0X` prefix in postback target IDs is NOT stable across pages.** ASP.NET composes it from the page's control tree, so the same nav menu can be `ctl01$LoginMenu1` on the dashboard and `ctl03$LoginMenu1` on a detail page. Never hardcode the prefix — always parse the live `__doPostBack(...)` from the rendered `href` (or use the trailing identifier like `LoginMenu1` to filter):
+
+```javascript
+// Match by the stable suffix, not the dynamic ctl0X prefix
+const link = [...document.querySelectorAll('a')]
+  .find(a => /\$LoginMenu1','4'/.test(a.getAttribute('href') || ''));   // 4 = Opportunities
+```
+
+### Linked count cells — the cell text IS the link text
+
+ASP.NET dashboards often render counters as `<a id="lbtnNosOfX">N</a>` where `N` is the number and the LABEL ("Document Request List", "Bid Supplements", "Pending Tasks") sits in a sibling cell. A heuristic that filters anchors by their innerText for the label returns nothing — the link's text is the digit.
+
+```javascript
+// ✅ Find by the stable element id (or postback target name)
+const link = document.querySelector('a#lbtnNosOfDRL');
+const count = parseInt(link.innerText, 10);
+// Click via postback target since the id pattern is stable
+await page.evaluate(() => __doPostBack('lbtnNosOfDRL', ''));
+```
+
+When the label and count are in separate cells, locate the postback link by parsing the page HTML for `<a id="lbtnNosOf*"` or `__doPostBack('lbtnNosOf*'`. The id pattern is stable across renders even when the `ctl0X` prefix isn't.
+
 ### Search-form filters silently exclude exact-ID matches
 
 A "Detailed Search" with date-range, category, and budget filters defaults to a narrow window (often the last 1-3 months). Putting a record's ID in the keyword box AND-combines with all the other filters — so a notice published outside that window returns "No results" even though it exists.

@@ -20,7 +20,7 @@ The Logged-in username appears at the top right (often the contact person on the
 
 ## Top nav — image-based postback
 
-The six top tabs are images wrapped in `<a href="javascript:__doPostBack('ctl01$LoginMenu1','N')">`:
+The six top tabs are images wrapped in `<a href="javascript:__doPostBack('ctlNN$LoginMenu1','N')">`. **The `ctlNN` prefix changes between pages** (seen `ctl01` on the dashboard, `ctl03` on notice detail) — match by the stable `$LoginMenu1','N'` suffix, not the prefix.
 
 | N | Tab | Image fragment |
 |---|---|---|
@@ -31,7 +31,20 @@ The six top tabs are images wrapped in `<a href="javascript:__doPostBack('ctl01$
 | 5 | Directory | `menu_dir` |
 | 6 | About PhilGEPS | `menu_about` |
 
-To navigate: `await page.evaluate(() => __doPostBack('ctl01$LoginMenu1','4'))`.
+```javascript
+// Robust across pages — find the live href and call its postback
+const args = await page.evaluate((tabN) => {
+  const a = [...document.querySelectorAll('a')]
+    .find(x => new RegExp(`\\$LoginMenu1','${tabN}'`).test(x.getAttribute('href') || ''));
+  if (!a) return null;
+  const m = a.getAttribute('href').match(/__doPostBack\('([^']+)','([^']*)'\)/);
+  return m ? [m[1], m[2]] : null;
+}, '4');
+await Promise.all([
+  page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+  page.evaluate((t, a) => __doPostBack(t, a), ...args),
+]);
+```
 
 (General "image-based nav" recipe is in skill.md.)
 
@@ -92,6 +105,28 @@ for (const label of ['IB', 'ITB A', 'ITB B', 'ITB C', 'Bill of Quantities']) {
 ```
 
 Files are served as PDFs named exactly after the label (`IB.pdf`, `ITB A.pdf`, `Bill of Quantities.pdf`).
+
+## Document Request List (DRL) — who else ordered the docs
+
+On the notice abstract page, the row labelled "Document Request List" has a number link (`<a id="lbtnNosOfDRL">N</a>`) where N is the count of bidders who've ordered. After your own order is submitted, N includes you — useful sanity-check that the order landed.
+
+**Two ways to open the list — both work:**
+- Postback: `await page.evaluate(() => __doPostBack('lbtnNosOfDRL', ''))`
+- Direct URL: `https://notices.philgeps.gov.ph/GEPS/Tender/ViewDocumentRequestList.aspx?directFrom=OpenOpp&refID=<N>` (one of the rare PhilGEPS deep-links that actually works)
+
+The `ViewDocumentRequestList.aspx` page is a single column showing only **Organization Name** — no contact, no PCAB class, no order timestamp, no address. The order numbers (1..N) reflect the order in which document requests were placed. To get more bidder detail, cross-reference org names against the public Directory tab (or the `services.dti.gov.ph/pcab` portal).
+
+```javascript
+const drl = await page.evaluate(() => {
+  const tbl = [...document.querySelectorAll('table')].find(t =>
+    /Organization Name/i.test(t.querySelector('th, td')?.innerText || ''));
+  return [...(tbl?.querySelectorAll('tr') || [])].slice(1)
+    .map(tr => tr.querySelectorAll('td')[1]?.innerText?.trim())
+    .filter(Boolean);
+});
+```
+
+The same `lbtnNosOf<X>` pattern likely covers other counters on the abstract (`lbtnNosOfAssoc` for Associated Components, `lbtnNosOfBidSupp` for Bid Supplements). The numeric count IS the link text — don't filter for the label "Document Request List" when finding the anchor.
 
 ## ALWAYS log out before disconnect
 
