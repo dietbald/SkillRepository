@@ -106,6 +106,42 @@ curl -s http://127.0.0.1:9222/json/version
 
 After launching, navigate to the target site and wait for login using the `ensureLoggedIn` pattern in Step 4.
 
+#### Site returns 403 / "Service unavailable" / "request blocked" before Chrome interaction
+
+Region or datacenter-IP block at the WAF (often Azure Front Door, Cloudflare, Akamai). Confirm with plain `curl -I` from the same machine — if curl also 403s, it's not bot detection, it's **the IP**.
+
+Test webshare/residential proxies and find one that returns 200, **and** check its egress country — different regional WAF rules may pass US but block GB/JP, etc:
+```bash
+while IFS=: read -r host port user pass; do
+  code=$(timeout 8 curl -s -o /dev/null -w "%{http_code}" -x "http://$user:$pass@$host:$port" \
+    -H 'User-Agent: Mozilla/5.0' "https://<site>/...")
+  geo=$(timeout 5 curl -s -x "http://$user:$pass@$host:$port" https://ipinfo.io/json \
+    | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('country','?'),d.get('city','?'))")
+  echo "$host:$port -> $code | $geo"
+done < ~/.openclaw/workspace/webshare_proxies.txt
+```
+
+Then launch a **second** Chrome on a different port through the working proxy (you can't add a proxy to an already-running Chrome):
+```bash
+mkdir -p $HOME/.chromedebug-proxy
+DISPLAY=:99 nohup "$CHROME" \
+  --remote-debugging-port=9223 \
+  --user-data-dir="$HOME/.chromedebug-proxy" \
+  --proxy-server="http://<host>:<port>" \
+  --no-sandbox --disable-gpu --disable-dev-shm-usage \
+  </dev/null >/tmp/chromedebug-proxy.log 2>&1 &
+```
+
+In puppeteer, attach proxy basic-auth on each page (Chrome's `--proxy-server` doesn't accept creds in the URL — they must come via CDP `Network.setExtraHTTPHeaders` or, simpler, `page.authenticate()`):
+```javascript
+const browser = await puppeteer.connect({ browserURL: 'http://127.0.0.1:9223', defaultViewport: null });
+const page = (await browser.pages())[0] || await browser.newPage();
+await page.authenticate({ username: PROXY_USER, password: PROXY_PASS });
+await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) ... Chrome/120.0.0.0 Safari/537.36');
+```
+
+Keep the proxied Chrome on a separate `--user-data-dir` so it doesn't fight the unproxied one for the SingletonLock or share session cookies across egress IPs (Akamai-style WAFs flag IP changes mid-session).
+
 ### 3c — Check puppeteer-core is installed
 
 Before writing any script, verify puppeteer-core is available in the project directory:
@@ -211,6 +247,53 @@ const dismissOverlays = async () => {
 ```
 
 Some sites chain multiple onboarding panels — call this in a loop until it returns nothing. Proton Mail is a known offender: ~5 sequential panels (welcome carousel, "Distraction-free", "Anytime, anywhere access", theme picker) on first login, all blocking the inbox.
+
+### reCAPTCHA v2 on a login form — solve with 2captcha-cli
+
+A submit that times out *only after the form was filled correctly* usually means a captcha widget is gating it. If you see `<div class="g-recaptcha" data-sitekey="...">` or an iframe whose `src` includes `recaptcha`, solve it offline and inject the token before submitting:
+
+```javascript
+const { execFileSync } = require('child_process');
+const CAPTCHA = '/home/tj/.agents/skills/2captcha-cli/solve-captcha';
+
+// 1. Discover the sitekey
+const sitekey = await page.evaluate(() => {
+  const el = document.querySelector('[data-sitekey]');
+  if (el) return el.getAttribute('data-sitekey');
+  const iframe = [...document.querySelectorAll('iframe')].find(f => f.src.includes('recaptcha'));
+  return iframe ? new URL(iframe.src).searchParams.get('k') : null;
+});
+
+// 2. Pay 2captcha workers (~$0.003, ~30-60s wait). Note `-u` is the page URL,
+//    NOT the iframe URL — Google validates the token against the parent origin.
+const token = execFileSync('python3', [CAPTCHA, 'recaptcha2', '-s', sitekey, '-u', page.url()],
+  { encoding: 'utf8', timeout: 180000 }).trim().split('\n').pop();
+
+// 3. Inject token into the hidden textarea + fire any registered callback
+await page.evaluate((t) => {
+  const ta = document.querySelector('textarea[name="g-recaptcha-response"]') || (() => {
+    const x = document.createElement('textarea');
+    x.name = 'g-recaptcha-response'; x.id = 'g-recaptcha-response';
+    document.querySelector('form').appendChild(x); return x;
+  })();
+  ta.style.display = ''; ta.value = t;
+  // Some sites validate via the JS callback rather than the form post — invoke it
+  try {
+    const clients = window.___grecaptcha_cfg?.clients || {};
+    for (const c of Object.values(clients))
+      for (const v of Object.values(c))
+        if (v && typeof v === 'object')
+          for (const v2 of Object.values(v))
+            if (typeof v2?.callback === 'function') v2.callback(t);
+  } catch {}
+}, token);
+
+// 4. Submit normally
+```
+
+If the form submit STILL fails after a valid token, the site likely uses **reCAPTCHA Enterprise** (different sitekey format, longer keys starting with `6Ld...`) — switch to `recaptchaV2 enterprise` mode in 2captcha or look for `recaptchaV3` markers (`grecaptcha.execute(sitekey, {action: '...'})` calls in page source).
+
+Don't bother trying to "click I'm not a robot" with the mouse — Google detects automation and shows the image challenge, which Puppeteer can't solve interactively in a reasonable time. Always go straight to 2captcha.
 
 ### Text-match must pick the smallest matching element
 
