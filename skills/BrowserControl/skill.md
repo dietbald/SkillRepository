@@ -84,6 +84,26 @@ curl -s http://127.0.0.1:9222/json/version
 
 **ChromeDebug profile note:** `--user-data-dir=C:\ChromeDebug` (Windows) or `~/.chromedebug` (Linux) is a dedicated profile separate from the user's regular Chrome. Sessions persist between runs. Never delete this directory or sessions will be lost.
 
+#### Linux troubleshooting — when chromium fails to bind 9222
+
+1. **Snap chromium can't write to a user-data-dir outside its confinement.** `/snap/bin/chromium` aborts with `Failed to create <user-data-dir>/SingletonLock: Permission denied (13)` even on directories you own. Solution: launch the **puppeteer-bundled** chrome instead — it has no sandbox restrictions:
+   ```bash
+   CHROME=$(ls -d ~/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome 2>/dev/null | tail -1)
+   DISPLAY=:99 nohup "$CHROME" \
+     --remote-debugging-port=9222 \
+     --user-data-dir="$HOME/.chromedebug" \
+     --no-sandbox --disable-gpu --disable-dev-shm-usage \
+     </dev/null >/tmp/chromedebug.log 2>&1 &
+   ```
+   Confirm `cat /tmp/chromedebug.log` shows `DevTools listening on ws://127.0.0.1:9222/...`.
+
+2. **`~/bin/Xvfb` may be a shim that only writes the lock file** (no real X server is started). Test with `DISPLAY=:99 xset q` — if it says "unable to open display :99" but a process named "bash /home/tj/bin/Xvfb" is running, that's the shim. Start the real one yourself:
+   ```bash
+   pkill -f "/home/tj/bin/Xvfb" 2>/dev/null; rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
+   /usr/bin/Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp & disown
+   sleep 2 && DISPLAY=:99 xset q   # should succeed now
+   ```
+
 After launching, navigate to the target site and wait for login using the `ensureLoggedIn` pattern in Step 4.
 
 ### 3c — Check puppeteer-core is installed
@@ -144,6 +164,70 @@ await page.mouse.click(x, y);  // real browser mouse event required
 Why `mouse.click()` and not `dispatchEvent` here: `dispatchEvent` fires on the element you target, but does NOT automatically propagate into child elements. Many download buttons are a `<div>` or `<button>` wrapping an inner `<a>` — the `<a>` is what actually handles navigation/tab opening. `mouse.click()` goes through the browser's full hit-testing pipeline and lands on the correct inner element.
 
 **When in doubt:** try `mouse.click()` first. If it does nothing, try `dispatchEvent`.
+
+### Click silently no-ops — check `aria-disabled` and `pointer-events`
+
+A click that triggers no network requests, no navigation, no console error usually means the target element is visually rendered but interactively disabled. Inspect the actual DOM node:
+
+```javascript
+const state = await page.evaluate(() => {
+  const el = [...document.querySelectorAll('a, button')].find(e => /Download/i.test(e.innerText || ''));
+  return {
+    ariaDisabled: el?.getAttribute('aria-disabled'),
+    pointerEvents: el && getComputedStyle(el).pointerEvents,
+    classes: el?.className,
+  };
+});
+```
+
+If `aria-disabled === 'true'` or `pointerEvents === 'none'`, look for a **disclaimer checkbox** above/below the button — sites commonly gate downloads behind an "I understand…" acknowledgement. Tick it (real `.click()`, not just setting `.checked = true` — React needs the event), wait ~1s, then re-click the button.
+
+### Dismiss marketing/onboarding popups before clicking ANY CTA on a fresh page load
+
+First-time visits to consumer sites frequently spawn YouTube subscribe popups, newsletter modals, cookie banners, or feature tours that overlay the page. Your CTA click lands on the popup, not the button — and the popup's element-from-point hit consumes the click silently.
+
+Sweep for the common dismissal labels before every CTA:
+```javascript
+const dismissOverlays = async () => {
+  for (let i = 0; i < 6; i++) {
+    const did = await page.evaluate(() => {
+      const labels = ['Maybe later', 'No thanks', 'Skip', 'Skip tour', 'Not now',
+                      'Got it', 'Close', 'Dismiss', "Let's get started", 'Use this', 'Done'];
+      for (const lbl of labels) {
+        const el = [...document.querySelectorAll('button, a')]
+          .find(e => e.innerText?.trim() === lbl && e.offsetParent !== null);
+        if (el) { el.click(); return lbl; }
+      }
+      const x = [...document.querySelectorAll('button')].find(b =>
+        (b.getAttribute('aria-label') || '').toLowerCase().includes('close') &&
+        b.offsetParent !== null);
+      if (x) { x.click(); return 'X'; }
+      return null;
+    });
+    if (!did) return;
+    await sleep(1200);
+  }
+};
+```
+
+Some sites chain multiple onboarding panels — call this in a loop until it returns nothing. Proton Mail is a known offender: ~5 sequential panels (welcome carousel, "Distraction-free", "Anytime, anywhere access", theme picker) on first login, all blocking the inbox.
+
+### Text-match must pick the smallest matching element
+
+```javascript
+// ❌ Wrong — `.find()` returns the first DOM-order match, often a wrapper div
+//    spanning multiple rows. Click coords land in the middle of the wrapper,
+//    hitting whatever row happens to be at viewport-center.
+const el = [...document.querySelectorAll('*')].find(e => /Subject text/.test(e.innerText));
+
+// ✅ Correct — collect all matches, pick the smallest (most specific) visible one
+const matches = [...document.querySelectorAll('*')]
+  .filter(e => /Subject text/.test(e.textContent || '') &&
+               e.children.length < 5 && e.offsetParent !== null);
+const el = matches.sort((a, b) => a.getBoundingClientRect().height - b.getBoundingClientRect().height)[0];
+```
+
+This is the difference between clicking the inbox row you wanted and clicking whichever row is at y=450.
 
 ### "Download PDF" / "Print" buttons that do nothing in Puppeteer
 
