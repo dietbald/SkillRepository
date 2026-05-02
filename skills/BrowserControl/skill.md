@@ -312,6 +312,84 @@ const el = matches.sort((a, b) => a.getBoundingClientRect().height - b.getBoundi
 
 This is the difference between clicking the inbox row you wanted and clicking whichever row is at y=450.
 
+### Image-based nav (classic ASP.NET WebForms) — `__doPostBack`, not text
+
+Old government / enterprise portals (PhilGEPS, BIR eFPS, DPWH portals) build their primary navigation as `<img>` tags inside `<a href="javascript:__doPostBack('controlID','arg')">`. The visible label is in the image (`menu_myorg.jpg`), not in any text node. Searching `[...document.querySelectorAll('a')].find(a => /My Organization/.test(a.innerText))` returns nothing, and the visible text near the tabs is whitespace.
+
+```javascript
+// ❌ Wrong — the label lives in the <img>, not the DOM text
+const link = [...document.querySelectorAll('a')]
+  .find(a => /My Organization/i.test(a.innerText));   // null
+
+// ✅ Correct — find the <a> wrapping the image whose src matches the label
+const link = [...document.querySelectorAll('a')]
+  .find(a => a.querySelector('img[src*="menu_myorg"]'));
+
+// Extract postback args from href and call directly — survives icon redesigns
+//   href="javascript:__doPostBack('ctl01$LoginMenu1','2')"
+const m = link.getAttribute('href').match(/__doPostBack\('([^']+)','([^']*)'\)/);
+await Promise.all([
+  page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+  page.evaluate((target, arg) => __doPostBack(target, arg), m[1], m[2]),
+]);
+```
+
+When you can't tell which image-src corresponds to which label, dump the page HTML once (`fs.writeFileSync('page.html', await page.content())`) and grep for the visible label — the surrounding `<img src="…">` tells you the URL fragment to filter on.
+
+### Search-form filters silently exclude exact-ID matches
+
+A "Detailed Search" with date-range, category, and budget filters defaults to a narrow window (often the last 1-3 months). Putting a record's ID in the keyword box AND-combines with all the other filters — so a notice published outside that window returns "No results" even though it exists.
+
+For exact-ID lookups, prefer the **simple search box** (single keyword + Search submit) on the basic listing page, not the detailed/advanced search form. Detailed search is for filtering many results, not finding one.
+
+If you must use detailed search, **widen all date ranges to the maximum span** before filling the keyword:
+```javascript
+await page.evaluate(() => {
+  document.querySelectorAll('input[id*="dateText"], input[name*="datePicker"]').forEach(i => {
+    if (/From|Min/.test(i.id)) i.value = '01-Jan-2020';
+    if (/To|Max/.test(i.id)) i.value = '31-Dec-2030';
+  });
+});
+```
+
+### Don't guess deep-link URL patterns — discover them from a working link
+
+Tempting shortcut: knowing a record's numeric ID, construct `/some/Path.aspx?refID=N` and `goto()`. On portals with versioned URL schemas (PhilGEPS, BIR, SEC), most guessed patterns redirect to a generic `ErrorPage.aspx` saying "Transaction cannot be completed". You can't tell from the error whether the URL is wrong, the record is gone, or the session lacks permission.
+
+**Pattern**: search via the UI for any record, click the result row, capture the resulting URL — that's the canonical pattern. Then substitute the ID. Always note the EXACT query-string keys (some portals use `refID`, others `pubReferenceID`, `noticeId`, `Result=N`, `DirectFrom=…` — these are not interchangeable).
+
+### Multi-step basket / order flows — download URLs only valid after final Submit
+
+E-procurement / ticketing / membership portals often have a 4-step "add to cart → review → confirm → submit" pipeline before downloads work:
+
+1. **Pre-cart**: links are `javascript:PassValue(itemID, ...)` — these don't download, they just stage the item
+2. **Order Basket**: shows price/quantity, has a `Continue` button
+3. **Order Confirmation**: shows summary + `Submit` button
+4. **Order Complete**: only NOW do the per-item links become real `__doPostBack('ctlNN','')` triggers that stream files
+
+Don't try to download from steps 1-3 — clicking the link calls a JS stub or refreshes the page. Walk the full flow first; the post-Submit page is also where the order/confirmation number appears (worth saving for receipts).
+
+### Always log out before disconnecting puppeteer
+
+Many portals (PhilGEPS, banking sites, some SaaS dashboards) reject a fresh login while another session is still active for the same user — leaves the next run unable to authenticate without manually killing the prior session in the web UI. Find the logout link by text (`Log-out`, `Logout`, `Sign out` — sometimes prefixed with `»`) and wait for the redirect to a login URL before disconnecting.
+
+```javascript
+await Promise.all([
+  page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
+  page.evaluate(() => {
+    const link = [...document.querySelectorAll('a')]
+      .find(a => /^(»\s*)?(Log[-\s]?out|Sign[-\s]?out)$/i.test((a.innerText || '').trim()));
+    if (link) link.click();
+  }),
+]);
+// Confirm by URL pattern before disconnect
+if (!/log[-_]?in|signin|account\/sign/.test(page.url())) {
+  console.warn('[logout may have failed]', page.url());
+}
+```
+
+This is mandatory on PhilGEPS — leaving a session open blocks the next BrowserControl run for the same user. The same caution applies to single-session-per-user portals like banking dashboards and some HR/SAP systems.
+
 ### "Download PDF" / "Print" buttons that do nothing in Puppeteer
 
 Many portals render a "Download PDF" or "Print" button that triggers a browser print dialog or uses `window.print()`. These **do nothing useful in Puppeteer** — the print dialog never appears and no file is saved.
