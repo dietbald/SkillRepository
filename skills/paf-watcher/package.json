@@ -1,0 +1,12 @@
+{
+  "name": "paf-watcher",
+  "version": "1.0.0",
+  "description": "Watches paf.mil.ph/notice-of-procurement/ for new upcoming Invitation to Bid notices",
+  "main": "check.js",
+  "scripts": {
+    "check": "node check.js"
+  },
+  "dependencies": {
+    "pdf-parse": "1.1.1"
+  }
+}
