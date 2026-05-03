@@ -1,0 +1,12 @@
+{
+  "name": "wvsu-watcher",
+  "version": "1.0.0",
+  "description": "Watches wvsu.edu.ph/bids-and-awards-committee/ for new procurement notices",
+  "main": "check.js",
+  "scripts": {
+    "check": "node check.js"
+  },
+  "dependencies": {
+    "puppeteer-core": "*"
+  }
+}

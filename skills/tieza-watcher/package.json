@@ -1,0 +1,13 @@
+{
+  "name": "tieza-watcher",
+  "version": "1.0.0",
+  "description": "Watches tieza.gov.ph bidding category pages for new procurement notices",
+  "main": "check.js",
+  "scripts": {
+    "check": "node check.js"
+  },
+  "dependencies": {
+    "puppeteer-core": "*",
+    "pdf-parse": "1.1.1"
+  }
+}
