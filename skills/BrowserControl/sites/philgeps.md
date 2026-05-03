@@ -128,6 +128,18 @@ const drl = await page.evaluate(() => {
 
 The same `lbtnNosOf<X>` pattern likely covers other counters on the abstract (`lbtnNosOfAssoc` for Associated Components, `lbtnNosOfBidSupp` for Bid Supplements). The numeric count IS the link text — don't filter for the label "Document Request List" when finding the anchor.
 
+## "Bidding Documents" component is often a stub for DPWH notices
+
+For DPWH District Engineering Office notices (especially Iloilo DEOs), the "Bidding Documents" / "BIDDING DOCUMENTS" entry under Associated Components frequently fails to stream — the postback fires, server returns the same HTML page (no `Content-Disposition: attachment`, no error), and no file lands. Smaller addenda (BAC Resolutions, supplements) on the same order DO download cleanly.
+
+This is a server-side upload gap on PhilGEPS: DPWH only registers the notice metadata + small addenda there. The full bidding-documents PDF lives on the DPWH portal at:
+```
+https://www.dpwh.gov.ph/dpwh/sites/default/files/webform/civil_works/advertisement/<solnumber>_-_<slug>.pdf
+```
+Use `sites/dpwh.md` to retrieve it (Imperva-walled, needs hCaptcha solve). Discover the exact `<slug>` via Google `site:dpwh.gov.ph <solnumber>` — the DPWH listing pages are paginated and miss results.
+
+Don't keep retrying the PhilGEPS postback with longer timeouts. A `200 text/html` (no attachment header) within 5 seconds means it's never coming.
+
 ## ALWAYS log out before disconnect
 
 PhilGEPS rejects a fresh login while another session is open for the same user — the next BrowserControl run will fail to authenticate. Click `Log-out` (top-right, with hyphen) and confirm the redirect to `/GEPS/log-in.aspx` before `browser.disconnect()`.

@@ -381,6 +381,110 @@ const link = [...document.querySelectorAll('a')]
   .find(a => /\$LoginMenu1','4'/.test(a.getAttribute('href') || ''));   // 4 = Opportunities
 ```
 
+### Downloading a PDF that Chrome renders inline
+
+When you `page.goto(pdfUrl)` and the response is `Content-Type: application/pdf`, Chrome's PDF viewer plugin **wraps the response in a 500-byte HTML stub** before puppeteer can read it. `await response.buffer()` then returns the wrapper, not the PDF, and CDP `Browser.setDownloadBehavior` won't force a save because the browser already chose "render inline":
+
+```html
+<!doctype html><html><head><link rel="stylesheet" href="chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf_embedder.css"></head>
+<body><template shadowrootmode="closed">…<iframe src="about:blank" type="application/pdf">…</template></body></html>
+```
+
+**Fix: re-fetch the URL via in-page `fetch()` after navigating somewhere else first.** The fetch call uses the page's session cookies and returns raw bytes:
+
+```javascript
+// 1. First navigate to a non-PDF page on the same origin (so cookies are scoped right)
+await page.goto('https://site.example/some-page', { waitUntil: 'domcontentloaded' });
+
+// 2. fetch the PDF in-page; encode bytes for transfer back
+const result = await page.evaluate(async (url) => {
+  const r = await fetch(url, { credentials: 'include' });
+  const ab = await r.arrayBuffer();
+  const bytes = new Uint8Array(ab);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 32768)
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
+  return { status: r.status, ct: r.headers.get('content-type'), b64: btoa(bin) };
+}, pdfUrl);
+
+const buf = Buffer.from(result.b64, 'base64');
+if (buf.slice(0, 4).toString() !== '%PDF') throw new Error('not a PDF: ' + buf.slice(0, 100));
+fs.writeFileSync(savePath, buf);
+```
+
+The chunked `String.fromCharCode.apply(null, ...)` loop is required: a single call on a multi-MB Uint8Array blows out the JS argument stack with `RangeError: Maximum call stack size exceeded`. 32 KB chunks are safe.
+
+**Don't try `Fetch.fulfillRequest` to inject `Content-Disposition: attachment`** when the response body might itself be a challenge/wrapper page — you'll save 850 bytes of HTML with a `.pdf` extension and look like you succeeded.
+
+### Imperva (Incapsula) hCaptcha — solve via 2captcha + iframe callback
+
+Sites fronted by Imperva (`*.dpwh.gov.ph`, many gov / enterprise sites) serve an "Additional security check is required" page with hCaptcha. After clearance, the parent site is browsable but **file URLs (PDFs, exports) often re-trigger the challenge** even with valid `incap_ses_*` cookies — you must complete the captcha first, in the special Imperva iframe.
+
+Detection signals:
+- Response body is ~850 bytes and starts with `<html style="height:100%"`
+- Body contains `<iframe id="main-iframe" src="/_Incapsula_Resource?...">`
+- Page title is empty
+
+**The full Imperva-hCaptcha bypass (~$0.003/solve via 2captcha):**
+
+```javascript
+const { execFileSync } = require('child_process');
+const CAPTCHA = '/home/tj/.agents/skills/2captcha-cli/solve-captcha';
+
+// 1. Trigger the challenge (any page on the site works)
+await page.goto('https://www.example.com/', { waitUntil: 'networkidle2' });
+await sleep(8000);
+
+// 2. Find the Imperva iframe and pull the hCaptcha sitekey from inside it
+//    (sitekey is in the iframe HTML, NOT the parent — page.evaluate misses it)
+const incap = page.frames().find(f => /_Incapsula_Resource/.test(f.url()));
+if (!incap) { /* already cleared, skip */ }
+const sitekey = await incap.evaluate(() => {
+  const el = document.querySelector('[data-sitekey]');
+  return el ? el.getAttribute('data-sitekey') : null;
+});
+
+// 3. Solve via 2captcha (-u must be the parent page URL, not the iframe URL)
+const out = execFileSync('python3', [CAPTCHA, 'hcaptcha', '-s', sitekey, '-u', page.url()],
+  { encoding: 'utf8', timeout: 240000 });
+const token = out.trim().split('\n').pop();
+
+// 4. Inject token + invoke Imperva's success callback INSIDE the iframe
+//    (just setting the textarea is not enough — Imperva listens for onCaptchaFinished)
+await incap.evaluate((t) => {
+  document.querySelectorAll('textarea').forEach(ta => { ta.style.display = ''; ta.value = t; });
+  if (typeof window.onCaptchaFinished === 'function') window.onCaptchaFinished(t);
+}, token);
+await sleep(8000);   // Imperva's clearance roundtrip
+
+// 5. The browser now has _ga, has_js, incap_ses_*, visid_incap_*, _gid cookies.
+//    File URLs work, but only via in-page fetch (Chrome PDF viewer trick — see above).
+```
+
+If `page.frames()` doesn't show an `_Incapsula_Resource` iframe, the site already cleared you — go straight to the fetch step.
+
+### Discovering CAPTCHA sitekeys — walk every frame
+
+Site CAPTCHAs commonly live inside an iframe (Imperva, Stripe Radar, Google reCAPTCHA in embedded widgets). A `document.querySelector('[data-sitekey]')` on the parent page returns null. Always walk frames:
+
+```javascript
+for (const f of page.frames()) {
+  try {
+    const sitekey = await f.evaluate(() => {
+      const el = document.querySelector('[data-sitekey]');
+      if (el) return el.getAttribute('data-sitekey');
+      const ifr = [...document.querySelectorAll('iframe')].find(i => /(hcaptcha|recaptcha)\.com|google\.com\/recaptcha/i.test(i.src || ''));
+      if (ifr) {
+        const u = new URL(ifr.src);
+        return u.searchParams.get('sitekey') || u.searchParams.get('k');
+      }
+      return null;
+    });
+    if (sitekey) { console.log('found in', f.url(), '→', sitekey); break; }
+  } catch { /* detached frame */ }
+}
+```
+
 ### Linked count cells — the cell text IS the link text
 
 ASP.NET dashboards often render counters as `<a id="lbtnNosOfX">N</a>` where `N` is the number and the LABEL ("Document Request List", "Bid Supplements", "Pending Tasks") sits in a sibling cell. A heuristic that filters anchors by their innerText for the label returns nothing — the link's text is the digit.
