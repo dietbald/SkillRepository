@@ -140,6 +140,12 @@ Use `sites/dpwh.md` to retrieve it (Imperva-walled, needs hCaptcha solve). Disco
 
 Don't keep retrying the PhilGEPS postback with longer timeouts. A `200 text/html` (no attachment header) within 5 seconds means it's never coming.
 
+**BAC Resolutions are often byte-identical across sibling solicitations.** A DEO that publishes 5 bid packages in the same week typically reuses the same `BAC Resolution No. NN.pdf` on all of them — same SHA, same size. If batch-downloading from one agency, dedupe by content hash to save bytes.
+
+## One login covers many sequential orders
+
+Inside a single PhilGEPS session you can place arbitrarily many orders without re-authentication or rate-limit. Verified across 9 sequential `BidNoticeAbstractUI → Order → Continue → Submit` flows on the same login. Only re-login if the script restarts Chrome — and remember the always-logout rule before exit.
+
 ## ALWAYS log out before disconnect
 
 PhilGEPS rejects a fresh login while another session is open for the same user — the next BrowserControl run will fail to authenticate. Click `Log-out` (top-right, with hyphen) and confirm the redirect to `/GEPS/log-in.aspx` before `browser.disconnect()`.

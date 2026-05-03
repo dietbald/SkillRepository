@@ -16,17 +16,27 @@ Use the **"Imperva (Incapsula) hCaptcha — solve via 2captcha + iframe callback
 
 ## File URL pattern
 
-Bid notice attachments are uploaded to:
+Bid notice attachments live under:
 ```
-https://www.dpwh.gov.ph/dpwh/sites/default/files/webform/civil_works/advertisement/<solnumber>_-_<slug>.pdf
+https://www.dpwh.gov.ph/dpwh/sites/default/files/webform/civil_works/advertisement/<file>.pdf
 ```
 
-Common `<slug>` values seen:
-- `bidding_documents_plans` (the main package — usually 5–10 MB)
-- `plans_additional_bid_forms`
-- `invitation_to_bid`
+**Filename has two conventions** depending on upload date — try both:
+- `<sol>_-_bidding_documents_plans.pdf` (with `_-_`) — used on **April 2026 onward** uploads (PhilGEPS refIDs ≥ ~`12950000`)
+- `<sol>_bidding_documents_plans.pdf` (no separator) — used on **earlier 2026** uploads (refIDs ≈ `12857xxx`)
 
-Discover the exact filename via Google `site:dpwh.gov.ph <solicitation-number>` — the DPWH search and listing pages are paginated and miss results, but Google indexes everything.
+Probe both on every fetch. Other observed slug variants (rarer):
+- `<sol>_-_bidding_documents`, `<sol>_bidding_documents`
+- `<sol>_-_plans_additional_bid_forms`
+- `<sol>_-_invitation_to_bid`
+
+Discover via Google `site:dpwh.gov.ph <solicitation-number>` only when both main slug variants 404 — most bids match `bidding_documents_plans` in one of the two naming styles.
+
+**404 detection**: a `text/html` response with `<title>Page not found | Department of Public Works and Highways</title>` (~24 KB) means wrong slug. Don't conflate with the 850-byte Imperva challenge stub.
+
+```javascript
+const isNotFound = (text) => /<title>Page not found \| Department of Public Works/i.test(text);
+```
 
 ## Listing pages (paginated, finicky)
 
@@ -35,6 +45,8 @@ Discover the exact filename via Google `site:dpwh.gov.ph <solicitation-number>` 
 - Iloilo 2nd DEO: `https://www.dpwh.gov.ph/dpwh/taxocsv3/iloilo-2nd-district-engineering-office`
 
 These fetch via the same Imperva chain, so solve the captcha once per session before browsing.
+
+**Imperva clearance persists for the entire Chrome session** once granted. A single hCaptcha solve covers an arbitrary number of subsequent file fetches across notices — don't re-solve per file. Verified across batch runs of 13 sequential PDF downloads ($0.003 total in 2captcha cost).
 
 ## Downloading the PDF
 
