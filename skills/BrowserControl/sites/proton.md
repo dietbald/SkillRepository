@@ -127,3 +127,21 @@ The `about:blank` frame is where the email content lives; the `https://mail.prot
 - Storage cap 500 MB; banner constantly upselling Mail Plus
 - `Upgrade to send email from @pm.me addresses` banner pinned to the top of the inbox after onboarding — non-blocking
 - "Get storage bonus" sidebar checklist is harmless; ignore it
+
+---
+
+## Proton "unusual activity" restriction — blocks third-party verification emails
+
+**Symptom**: After creating the account and signing up for a third-party service, the verification email never arrives. Proton shows no error; the inbox is simply empty. The account itself works (can send/receive from other Proton users).
+
+**Cause**: Proton's automated abuse detection flags accounts that register for many external services in a short window. The restriction blocks all incoming emails from non-Proton senders until resolved.
+
+**Fix — add and verify a recovery email address:**
+
+1. Navigate to `https://account.proton.me/u/0/mail/recovery` (the `/u/0/` segment may vary — `/u/1/` for second account, etc.)
+2. Fill the recovery email field with a valid, accessible address (e.g. an `@airmail.cc` alias from cock.li)
+3. Click "Save" — Proton sends a verification code to the recovery address
+4. Retrieve the code from the recovery inbox, paste it back in the Proton verification field
+5. After verification, Proton shows "Your account is fully secure" and queued third-party emails begin arriving within 2–5 minutes
+
+**Important**: Once the restriction lifts, previously queued verification emails (e.g. a TMDB activation) will arrive. Check the inbox before requesting a resend.

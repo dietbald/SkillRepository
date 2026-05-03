@@ -874,6 +874,25 @@ await page.screenshot({ path: 'debug.png' });
 
 Use screenshots when stuck — inspect the image before taking further action.
 
+**`Page.captureScreenshot timed out` on heavy pages** — pages with many large embedded images (e.g. Proton Mail email bodies with 10+ attachments) can cause `page.screenshot()` to exceed the `protocolTimeout`. Two fixes:
+1. Increase `protocolTimeout` to `180000` in `puppeteer.connect()` for sessions that need screenshots of email bodies.
+2. Skip screenshots immediately after clicking to open an email — take them only after a plain navigation where the page is lighter.
+
+### `page.click(selector)` timeout → use `page.type()` instead
+
+When `page.click('#field')` throws `Runtime.callFunctionOn timed out`, the CDP call to locate the element is stalling (heavy SPA, blocked JS). For **input fields**, `page.type(selector, value)` is a lighter alternative — it sends keystrokes directly without the same CDP round-trip:
+
+```javascript
+// ❌ page.click() can time out on heavy SPAs before you even start typing
+await page.click('#username');
+await page.keyboard.type(value);
+
+// ✅ page.type() sends keystrokes directly — doesn't time out in the same way
+await page.type('#username', value, { delay: 60 });
+```
+
+Why: `page.click()` uses `Runtime.callFunctionOn` to evaluate a click-dispatch function in the page context. If the page's JS is still loading/executing, this stalls. `page.type()` bypasses that by injecting key events at the CDP `Input.insertText`/`Input.dispatchKeyEvent` level.
+
 ### Validate page state before prompting the user
 
 **Always screenshot and read the page state before asking the user to log in or take an action.** Why: a page that's stuck on `400 Bad Request`, an error wall, or the wrong account isn't something the user can solve by typing credentials. Show them what you see, then ask.
