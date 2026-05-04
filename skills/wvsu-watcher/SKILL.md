@@ -10,13 +10,14 @@ Monitor WVSU BAC (Bids and Awards Committee) listing page for new procurement no
 
 ## What it does
 
-1. Launches Chrome headlessly (no debug port, no BrowserControl)
-2. Navigates to `https://wvsu.edu.ph/bids-and-awards-committee/`
-3. Waits 4 seconds for JS rendering then scrapes the responsive table
-4. Identifies notices not yet in `seen.json`
-5. Estimates open/closed status from posting date (RFQ ≤10 days, IB/ITB ≤45 days)
-6. Reports possibly-open vs. likely-closed
-7. Saves state to `seen.json` and results to `results/YYYY-MM-DD.json`
+1. Connects to Chrome on port 9223 if available; falls back to launching headless Chrome
+2. Navigates to `https://wvsu.edu.ph/about-wvsu/good-governance/bids-and-awards-committee/`
+3. Waits for JS rendering then scrapes the AJAX-rendered table (each entry = its own `<table>`)
+4. On initial run (empty seen.json): scrapes pages 1–5 to seed the dedup state
+5. On subsequent runs: page 1 only (newest entries appear first)
+6. Flags [CONSTRUCTION] items via keyword match on title
+7. Estimates open/closed status from posting date (RFQ ≤10 days, IB/ITB ≤45 days)
+8. Saves state to `seen.json` and results to `results/YYYY-MM-DD.json`
 
 ## Usage
 
@@ -35,10 +36,14 @@ npm install
 node check.js
 ```
 
-Required npm packages:
-- `puppeteer-core` — launches Chrome headlessly
+Required npm packages (already installed in wvsu-watcher/):
+- `puppeteer-extra` + `puppeteer-extra-plugin-stealth` — connects to port 9223 or launches headless
+- `puppeteer-core` (fallback, headless launch only)
 
 Chrome must be installed at `C:\Program Files\Google\Chrome\Application\chrome.exe` or override via `CHROME_PATH`.
+
+**Page is JavaScript-rendered** — plain `https` fetch returns no bid data. Puppeteer required.
+**URL changed** from `/bids-and-awards-committee/` to `/about-wvsu/good-governance/bids-and-awards-committee/`.
 
 ## Scheduling (Windows Task Scheduler)
 
