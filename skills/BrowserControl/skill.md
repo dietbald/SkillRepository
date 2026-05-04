@@ -171,6 +171,53 @@ await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) ... Chrome/12
 
 Keep the proxied Chrome on a separate `--user-data-dir` so it doesn't fight the unproxied one for the SingletonLock or share session cookies across egress IPs (Akamai-style WAFs flag IP changes mid-session).
 
+#### Cloudflare managed challenge (Turnstile) — `cf_clearance` is fingerprint-bound, not just IP-bound
+
+`cf_clearance` is tied to **both the originating IP AND the TLS/browser fingerprint** of the Chrome that solved it. Injecting it into any other process will fail:
+
+- **Plain Node.js `https` + `cf_clearance` cookie → 403** — Node's TLS stack has a different JA3 fingerprint than Chrome, even with correct headers and Client Hints (`Sec-CH-UA-*`). Cloudflare detects the mismatch before ever checking the cookie.
+- **`curl` + `cf_clearance` → 403** — Same reason.
+- **Fresh headless Chrome + stealth + injected `cf_clearance` → blocked** — New Chrome instance has a different browser fingerprint (different canvas, font, plugin signatures) even on the same IP.
+- **2captcha Turnstile token → rejected** — 2captcha solves from their server's IP; the token is bound to that IP, not yours.
+
+**The only working approach:** Reuse the **same Chrome user-data-dir** that originally solved the challenge. Connect to it via Puppeteer. The `cf_clearance` cookie stored in that profile is valid for 1 year.
+
+```javascript
+// Launch Chrome with the same profile that solved the challenge
+execFile(chromePath, [
+  `--remote-debugging-port=9223`,
+  `--user-data-dir=C:\\ChromeDebugPCG`,  // same dir as original solve
+  '--no-first-run', '--no-default-browser-check',
+]);
+const browser = await puppeteer.connect({ browserURL: 'http://127.0.0.1:9223', defaultViewport: null });
+```
+
+When `cf_clearance` expires or IP changes: navigate to the site in that same Chrome, solve the challenge manually once, then resume automation.
+
+#### Downloading files from Cloudflare-protected sites — use page.evaluate(fetch())
+
+Plain `https` requests from Node.js get 403 on Cloudflare-protected sites even with the full cookie jar, because the TLS fingerprint doesn't match Chrome. Use `page.evaluate(fetch(...))` to download binary files through the browser's own network stack:
+
+```javascript
+async function downloadViaBrowser(page, url) {
+  const result = await page.evaluate(async (fileUrl) => {
+    const resp = await fetch(fileUrl, { credentials: 'include' });
+    if (!resp.ok) return { status: resp.status, data: null };
+    const buf = await resp.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return { status: resp.status, data: btoa(binary) };
+  }, url);
+  return {
+    status: result.status,
+    body: result.data ? Buffer.from(result.data, 'base64') : Buffer.alloc(0),
+  };
+}
+```
+
+Why base64: `page.evaluate` can only return JSON-serializable values. Binary buffers must be encoded as base64 strings and decoded back in Node.js.
+
 ### 3c — Check puppeteer-core is installed
 
 Before writing any script, verify puppeteer-core is available in the project directory:
@@ -377,6 +424,27 @@ const el = matches.sort((a, b) => a.getBoundingClientRect().height - b.getBoundi
 ```
 
 This is the difference between clicking the inbox row you wanted and clicking whichever row is at y=450.
+
+### Scraping PDF/link lists — scope to content area, not the full page
+
+CMS portals (Joomla, WordPress, Drupal) embed hundreds of navigation, sidebar, and footer links in every page's HTML. If you `querySelectorAll('a[href$=".pdf"]')` on the full page, you'll get all of them — e.g. Joomla sites routinely have 1,200+ sidebar PDFs that have nothing to do with the article being scraped.
+
+Always scope link extraction to the main content element first:
+
+```javascript
+// ✅ Correct — scope to main content area before scanning for PDFs
+function parsePdfLinks(html) {
+  // id="content" on Joomla; ".entry-content" on WordPress; ".field-items" on Drupal
+  const contentMatch = html.match(/id="content"[\s\S]*/) ||
+                       html.match(/class="entry-content"[\s\S]*/);
+  const scope = contentMatch ? contentMatch[0] : html;
+  const re = /href="([^"]*\.pdf[^"]*)"/gi;
+  const links = [];
+  let m;
+  while ((m = re.exec(scope)) !== null) links.push(m[1]);
+  return [...new Set(links)];
+}
+```
 
 ### Image-based nav (classic ASP.NET WebForms) — `__doPostBack`, not text
 
