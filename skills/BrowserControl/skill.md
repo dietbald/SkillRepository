@@ -4,6 +4,19 @@ You are controlling a Chrome browser via Puppeteer connected to a remote debug p
 
 ---
 
+## Operating principle: scope every change to the smallest unit that needs it
+
+When you need a different network egress, user-agent, cookie jar, or proxy for ONE site, do NOT make a system-wide change. **Use per-process scoping always:**
+
+- Need a different egress for one site → **launch a second Chrome on a different port** (e.g. `--remote-debugging-port=9223`) with `--proxy-server=...` and a separate `--user-data-dir`. Don't touch system routing, the existing Chrome, or any global proxy env var.
+- Need a residential exit for one site → SOCKS5 over SSH (`ssh -D 1080 user@residential-host`) or per-Chrome `--proxy-server=socks5://...`. **Never** use `tailscale up --exit-node=...` — that routes ALL outbound traffic system-wide, including the SSH session driving Claude Code itself, and will lock you out of the host.
+- Need a different cookie session → second Chrome with its own `--user-data-dir`, not deleting the first one's cookies.
+- Need a different DNS or hosts entry → write to a per-launch hosts file via `--host-resolver-rules="MAP example.com 1.2.3.4"`, not `/etc/hosts`.
+
+The cost of a per-process scope is small (one extra Chrome instance, one extra port). The cost of a system-wide change you got wrong is your SSH session and a trip to the local console.
+
+---
+
 ## Step 0 — Load credentials
 
 Read `~/.claude/skills/BrowserControl/.env` with the Read tool. Parse every non-comment, non-empty line as `KEY=VALUE`. Store these values in memory for this session — use them whenever the task requires a name, email, password, or API key. Never hardcode credentials in scripts.
@@ -109,6 +122,22 @@ After launching, navigate to the target site and wait for login using the `ensur
 #### Site returns 403 / "Service unavailable" / "request blocked" before Chrome interaction
 
 Region or datacenter-IP block at the WAF (often Azure Front Door, Cloudflare, Akamai). Confirm with plain `curl -I` from the same machine — if curl also 403s, it's not bot detection, it's **the IP**.
+
+**Distinguish three IP-restriction classes before spending time on proxies:**
+
+1. **Soft geo-block via WAF** — datacenter US works, GB/JP block. Use webshare. Verified with PhilGEPS Starbucks-style sites.
+2. **Hard country-only firewall at the host** — datacenter proxies in *any* country still time out; only residential ISP IPs in the target country answer. Verified for some `.gov.ph` and `.mil.ph` sites (e.g. `paf.mil.ph`). Webshare datacenter pool won't help — you need a residential proxy plan in the target country, OR a SOCKS5 over SSH to a real device on a residential connection.
+3. **Site is genuinely down** — `host` resolves, no machine on the planet can connect. Confirm with `check-host.net` or `archive.org/wayback/available`. Don't burn time building proxy infra for a dead host.
+
+Quick triage:
+```bash
+# 1. Direct
+curl -sI --max-time 10 "$URL" -H "User-Agent: Mozilla/5.0" -o /dev/null -w "%{http_code}\n"
+# 2. Third-party (Dallas node) — distinguishes "down" from "blocks us specifically"
+curl -s --max-time 15 "https://check-host.net/check-http?host=$URL&node=us2.node.check-host.net" -H "Accept: application/json"
+# 3. Wayback — zero snapshots = chronically unreachable, build won't help
+curl -s "https://archive.org/wayback/available?url=$(echo $URL | sed 's|https*://||')"
+```
 
 Test webshare/residential proxies and find one that returns 200, **and** check its egress country — different regional WAF rules may pass US but block GB/JP, etc:
 ```bash

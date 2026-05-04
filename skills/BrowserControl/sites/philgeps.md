@@ -67,6 +67,54 @@ Org Profile shows `Registration Type: Red | Blue | Platinum`. Most read features
 
 If a notice isn't in **Open Opportunities**, repeat the same search inside **Former Opportunities** (closed bids) and **Award Notices** (post-award).
 
+**Detecting bid status from the abstract** — the `Status` cell on `BidNoticeAbstractUI.aspx` shows `Active` (open, can place orders) or `Closed` (must use the closed-bid extraction path below). Don't assume from the closing date — bid status is set by procurement workflow, not date arithmetic.
+
+## Closed-bid extraction (NO order placement needed)
+
+For bids with `Status: Closed`, the order flow is gone — clicking Continue/Submit will fail because `input#btnCont` doesn't exist. But documents are still accessible directly.
+
+Path:
+1. From the abstract, click `lbtnNosOfAssoc` postback (same as open bids)
+2. Lands on `/GEPS/Tender/ViewBidNoticeAssocCompUI.aspx?DirectFrom=…&refID=N&...` (NOT the order basket)
+3. Component name is rendered as a postback link `dgDocs$ctlNN$docNameLinkButton` — clicking streams the PDF directly
+
+```javascript
+// After login, on a closed bid abstract:
+await Promise.all([
+  page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
+  page.evaluate(() => __doPostBack('lbtnNosOfAssoc', '')),
+]);
+await sleep(4000);
+// Now on ViewBidNoticeAssocCompUI; click each component name
+const before = new Set(fs.readdirSync(DOCS_DIR));
+const coords = await page.evaluate(() => {
+  const a = [...document.querySelectorAll('a')]
+    .find(x => x.id?.startsWith('dgDocs') && x.id.endsWith('docNameLinkButton') && x.offsetParent !== null);
+  if (!a) return null;
+  const r = a.getBoundingClientRect();
+  return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) };
+});
+await page.mouse.click(coords.x, coords.y);
+// File arrives named "<solicitation-number>.pdf" via Content-Disposition
+```
+
+This path is **faster than the open-bid order flow** (no Continue/Submit/OrderID round-trips) and is the right approach when archive-mining historical bids.
+
+**`AwardNoticeLink` returning "No award notices found"** is NOT a signal that the bid is still open — many closed-but-not-yet-awarded notices show empty award lists. Use the `Status` field on the abstract instead.
+
+## Per-agency upload completeness
+
+Whether `Status: Closed` notices have a real PDF in `lbtnNosOfAssoc` depends on the **procuring agency**, not on PhilGEPS:
+
+| Agency type | Typical behavior |
+|---|---|
+| **DPWH District Engineering Offices** | Stub component on PhilGEPS; real bid docs only on dpwh.gov.ph (see `dpwh.md`) |
+| **Province / City / Municipal LGUs** (e.g. Province of Iloilo PEO, Municipality of Dumangas) | Full bid docs uploaded to PhilGEPS — the `dgDocs$ctl02$docNameLinkButton` link returns the real PDF |
+| **DepEd / DOH / DOST regional offices** | Mixed — try PhilGEPS first |
+| **National attached agencies (NIA, BPI)** | Usually full upload to PhilGEPS |
+
+When uncertain, click the component name first; if you get HTML instead of `application/pdf` within 5s, fall back to the agency portal.
+
 ## Order Associated Components — full flow
 
 On the notice abstract page, the "Associated Components" block has a single `Order` link:
