@@ -513,6 +513,37 @@ The chunked `String.fromCharCode.apply(null, ...)` loop is required: a single ca
 
 **Don't try `Fetch.fulfillRequest` to inject `Content-Disposition: attachment`** when the response body might itself be a challenge/wrapper page — you'll save 850 bytes of HTML with a `.pdf` extension and look like you succeeded.
 
+### OCR image-only PDFs (scans saved as PDF)
+
+Many gov/enterprise portals serve scanned documents as `application/pdf` but with no embedded text — `pdfminer.six` extracts an empty string. Detect early (`extract_text(fp).strip()` is `""`) then OCR per page via PyMuPDF render → tesseract:
+
+```python
+import fitz, subprocess, tempfile, os
+def ocr_pdf(path, dpi=250, psm=6):
+    doc = fitz.open(path)
+    pages = []
+    for pg in doc:
+        pix = pg.get_pixmap(dpi=dpi)
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as t:
+            pix.save(t.name)
+            r = subprocess.run(['tesseract', t.name, '-', '--psm', str(psm)],
+                               capture_output=True, text=True, timeout=120)
+            pages.append(r.stdout)
+            os.unlink(t.name)
+    doc.close()
+    return '\n'.join(pages)
+```
+
+`--psm 6` (assume single uniform block of text) is the right default for tabular government documents. `dpi=250` is the floor for reliable OCR of small typeset text; bump to 300 if the result has obvious mis-recognitions on numerals.
+
+**File-extension lies**: don't trust the filename. Some portals (PhilGEPS) auto-convert uploaded JPGs to PDF and serve them with `.jpg` in the URL but `Content-Type: application/pdf`. Check `buf.slice(0,4)` — `%PDF` means PDF regardless of extension.
+
+### Don't extrapolate IDs from one observation
+
+When a portal's resources have numeric IDs (file IDs, order IDs, document IDs), DON'T assume `+1, +2, +3` from one captured ID maps to siblings in the same logical group. Many portals issue IDs from a global sequence shared across all tenants/uploads, so neighbouring IDs belong to unrelated records (verified on PhilGEPS: fetching `FileID + 1..3` from one BAC Resolution returned office-supplies and medical-supplies docs from completely unrelated agencies).
+
+If a portal exposes a tree/list endpoint that returns the canonical ID per record, use that. If not, click each row individually AND verify: filename match, content-disposition header, magic bytes, first-page OCR — if any of those don't match the expected document, the ID extrapolation is wrong.
+
 ### Imperva (Incapsula) hCaptcha — solve via 2captcha + iframe callback
 
 Sites fronted by Imperva (`*.dpwh.gov.ph`, many gov / enterprise sites) serve an "Additional security check is required" page with hCaptcha. After clearance, the parent site is browsable but **file URLs (PDFs, exports) often re-trigger the challenge** even with valid `incap_ses_*` cookies — you must complete the captcha first, in the special Imperva iframe.

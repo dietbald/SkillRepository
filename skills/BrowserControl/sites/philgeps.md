@@ -194,6 +194,83 @@ Don't keep retrying the PhilGEPS postback with longer timeouts. A `200 text/html
 
 Inside a single PhilGEPS session you can place arbitrarily many orders without re-authentication or rate-limit. Verified across 9 sequential `BidNoticeAbstractUI → Order → Continue → Submit` flows on the same login. Only re-login if the script restarts Chrome — and remember the always-logout rule before exit.
 
+## Award notice — full bid result extraction (winner, all bidders, DQ reasons)
+
+When a bid is awarded, the Award Notice Abstract carries the high-level fields (awardee, contract amount, dates) and the **BAC Resolution PDFs** carry the full bid-opening abstract: every bidder who submitted, their bid amount, and any disqualifications with reasons.
+
+### Step 1 — Get the AwardID from the notice abstract
+On `BidNoticeAbstractUI.aspx?refID=N`, click the `Award Notice` link → lands on `ViewAwardNoticesListUI.aspx?refID=N`. The Title column has a link to:
+```
+/GEPS/R4/R3_AwardNotice_AwardAbstract.html?RefID=<ref>&LineItemID=1&OrgID=<org>&AwardID=<award>&DF=&uOrgId=
+```
+
+Empty award list (`No award notices found`) is **not** a reliable failure signal — bids may be in post-qualification with the award not yet posted. Wait or check iloilo.gov.ph (or equivalent procuring-entity portal) before declaring failure.
+
+### Step 2 — Parse structured fields from the abstract page
+`document.body.innerText` reveals every field as `Label:` followed by value on next line. Useful keys: `Awardee:`, `Address:`, `Contract Amount:`, `Award Date:`, `Proceed Date:`, `Contract End Date:`, `Contract No.:`, `Reason For Award:`, `Approved Budget:`.
+
+### Step 3 — Get every attached document via the JSON tree endpoint
+
+**Don't** click the "View Documents" count and harvest URLs — only the first row click fires a download URL; subsequent clicks update the inline PDF viewer without re-firing XHR.
+
+**Don't** assume FileIDs are sequential from the first one — they are **globally sequential across all PhilGEPS uploads from all agencies**, so `+1, +2, +3` will land on unrelated agencies' files (verified: tried this and got DepEd-Bukidnon office supplies + Amang-Rodriguez Medical Center docs interleaved with the target award).
+
+**Do** hit the JSON endpoint directly. Click the count once to trigger the AJAX, then capture the response, OR call the endpoint yourself:
+
+```javascript
+// Same-session in-page fetch — uses live cookies + xnode (sniff once to learn xnode-NN)
+const treeJson = await page.evaluate(async (awardID) => {
+  const u = `https://notices.philgeps.gov.ph/p4_webservices/GEPSR3_AwardNotice.asmx/AwardAbstract_GetListAwardDocAndCategory?awardID=${awardID}&module=%22all%22&node=xnode-180`;
+  const r = await fetch(u, { credentials: 'include' });
+  return await r.text();
+}, awardID);
+
+const data = JSON.parse(treeJson).d;   // .NET wraps in { d: [...] }
+const files = [];
+const walk = (nodes, parentCategory) => {
+  for (const n of nodes) {
+    if (n.leaf && n.FileID) files.push({
+      category: parentCategory,        // 'Notice Of Award' | 'BAC Resolution' | 'Notice to Proceed' | 'Signed Contract'
+      name: n.DocumentName,
+      fileID: n.FileID,
+      awardDocID: n.ANAwardDocID,
+    });
+    if (n.children) walk(n.children, n.DocumentName);
+  }
+};
+walk(data, '(root)');
+```
+
+The endpoint returns nested `AwardNoticeDocumentsBO` records: top-level groups (NOA / BAC Resolution / NTP / Signed Contract) with `leaf:false`, each containing `children:[{leaf:true, FileID, DocumentName, ANAwardDocID}]`. Same agency may upload duplicate batches (BAC sometimes uploads RESO 1/2/3 twice with different FileIDs but identical bytes) — dedupe by content hash if storage matters.
+
+### Step 4 — Fetch each FileID via the FileDownloadHandler
+
+```javascript
+for (const f of files) {
+  const url = `https://notices.philgeps.gov.ph/p4_webservices/Handlers/GEPSR3_FileDownloadHandler.ashx?ID=${f.fileID}&Convert=1&Download=0&IsWatermarked=0`;
+  const r = await page.evaluate(async (u) => {
+    const resp = await fetch(u, { credentials: 'include' });
+    const ab = await resp.arrayBuffer();
+    const bytes = new Uint8Array(ab);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 32768) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
+    return { status: resp.status, b64: btoa(bin) };
+  }, url);
+  fs.writeFileSync(`${dir}/${f.category}__${f.name}`, Buffer.from(r.b64, 'base64'));
+}
+```
+
+### Step 5 — BAC Resolution is image-only PDF — OCR to extract bidders
+
+The BAC Resolution scans are JPG-converted-to-PDF (named `.jpg` but Content-Type `application/pdf`). PyMuPDF + tesseract recipe (in skill.md → "OCR image-only PDFs") gets you the structured fields:
+
+- All firms that purchased bid documents
+- All bidders who submitted at the bid opening + their bid amounts
+- Bidders who failed at Opening of Bids (DQ reasons spelled out — e.g. "Omnibus Sworn Statement contains a discrepancy. The stated project title…")
+- Post-qualified LCRB declared winner
+
+The Resolution typically spans 2-3 pages: page 1 = list of doc-purchasers + bid-opening read-out + DQ reasons; page 2 = post-qualification result + LCRB declaration; page 3 = governor's approval.
+
 ## ALWAYS log out before disconnect
 
 PhilGEPS rejects a fresh login while another session is open for the same user — the next BrowserControl run will fail to authenticate. Click `Log-out` (top-right, with hyphen) and confirm the redirect to `/GEPS/log-in.aspx` before `browser.disconnect()`.
