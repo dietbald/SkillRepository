@@ -970,6 +970,51 @@ async function dismissSessionModal(page) {
 ```
 Call `dismissSessionModal()` before `ensureLoggedIn()` on sites known to show blocking expiry modals (e.g. Cebu Pacific). The modal must be dismissed before the login polling can begin.
 
+### WebAuthn / passkey login — don't try to automate, hand off to the user
+
+CDP-injected `mouse.click()` does NOT trigger the OS-level credential dialog (Windows Hello, macOS Touch ID, Android biometric). The click registers, the URL may navigate to `/challenge/passkey` (or similar), but no Windows Hello prompt appears and no error fires — the page just sits there forever.
+
+Why: WebAuthn (`navigator.credentials.get()`) requires "user activation" — a real human-input gesture. Chrome's WebAuthn implementation distinguishes CDP-injected events from genuine input and silently refuses to invoke the platform authenticator on the former. Same applies to Playwright.
+
+**Pattern: automate up to the auth method picker, then stop.** Type the phone/email and click Continue, but let the user click "Continue with Passkey" (or "Send Push / Send OTP") themselves in the Chrome window. The user's click is a real gesture that satisfies WebAuthn, and out-of-band channels (push, SMS) need them anyway.
+
+```javascript
+// ✅ Automate phone-entry + Continue, then poll for the user's auth choice
+await page.type('input[type="tel"]', PHONE);
+await page.click('button:has-text("Continue")');
+console.log('*** Pick auth method (Push/OTP/Passkey) in the Chrome window ***');
+for (let t = 0; t < 60; t++) {                        // 5 min cap
+  await sleep(5000);
+  if (!page.url().includes('weblogin')) break;        // logged in
+}
+```
+
+Don't go past two minutes of polling — OAuth `ctx_id` / `state` parameters typically expire fast (see next note).
+
+### OAuth challenge-options session expires fast — act within ~2 minutes
+
+OAuth-style auth-method-picker pages (Grab `/challenge-options`, similar Apple/Google flows) carry a server-side session keyed by `ctx_id`/`state` in the URL. If the user lingers on the picker for ~5+ minutes before clicking an option, the next click yields "Oops, something went wrong" instead of advancing — the session expired. `history.back()` to retry uses the now-invalid session and fails the same way.
+
+**Recovery is to start completely fresh:** click "Back to login", re-enter the phone, re-pick the method. Don't try to reuse the URL's `ctx_id`.
+
+**Prevention:** keep poll-for-user windows under ~2 minutes; if you need longer, prompt the user before starting so they're ready, rather than after.
+
+### URL substring checks — `url.includes('challenge')` matches `code_challenge=` query param
+
+OAuth/PKCE redirect URLs are stuffed with words that overlap with path segments: `code_challenge=`, `state=`, `redirect_uri=`, `nonce=`, `request_id=`. A naive `page.url().includes('login')` or `.includes('challenge')` will give wrong answers because the query string contains those substrings.
+
+```javascript
+// ❌ Wrong — `code_challenge=` in query string makes this true even on the phone-entry page
+if (page.url().includes('challenge')) { /* misfires */ }
+
+// ✅ Correct — check the pathname only
+const path = new URL(page.url()).pathname;
+if (path.endsWith('/login')) { /* phone-entry page */ }
+if (path.includes('/challenge-options')) { /* auth-method picker */ }
+```
+
+This bites hardest on weblogin / OIDC providers whose URLs span 800+ chars of query parameters.
+
 ### Request interception — always use named handlers
 
 **Never use anonymous functions with `page.on('request', ...)`** when interception needs to be enabled/disabled across multiple navigations. Anonymous handlers cannot be removed with `page.off()`, causing "Request Interception is not enabled!" crashes when a stale handler calls `req.continue()` after interception is disabled.
