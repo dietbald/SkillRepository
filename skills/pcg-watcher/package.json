@@ -1,0 +1,14 @@
+{
+  "name": "pcg-watcher",
+  "version": "1.0.0",
+  "description": "Watches coastguard.gov.ph bidding opportunities for new procurement notices",
+  "main": "check.js",
+  "scripts": {
+    "check": "node check.js"
+  },
+  "dependencies": {
+    "pdf-parse": "1.1.1",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}
