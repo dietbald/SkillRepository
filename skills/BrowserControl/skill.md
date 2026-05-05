@@ -1317,6 +1317,32 @@ Puppeteer connects identically: `puppeteer.connect({ browserURL: 'http://127.0.0
 
 `TargetClosedError` (Playwright) / `Protocol error: Target closed` (Puppeteer) can fire mid-iteration on long runs — the CDP connection just drops. There's no clean recovery; design every script around `if fs.existsSync(fp) skip` so a re-run picks up where it left off rather than re-downloading everything.
 
+### Auditing a plain-HTTPS scraper — use BrowserControl to find missing link patterns
+
+Before writing a scraper's `href` regex, use BrowserControl to extract every link on the page and identify all URL patterns in use. Sites frequently mix link types (direct PDFs, Google Drive, OneDrive, internal paths) across different sections or tabs — a regex that only matches one pattern silently misses the rest.
+
+```javascript
+// Extract all links and group by URL pattern
+const links = await page.evaluate(() =>
+  [...document.querySelectorAll('a[href]')].map(a => a.href)
+);
+const patterns = {};
+for (const url of links) {
+  const host = new URL(url).hostname;
+  patterns[host] = (patterns[host] || 0) + 1;
+}
+console.log(patterns);
+// e.g. { 'isufst.edu.ph': 80, 'drive.google.com': 37 } → scraper must match BOTH
+```
+
+Why: a scraper that only matches `.pdf` hrefs will silently pass with 0 errors but miss every Google Drive / OneDrive entry. The count mismatch between BrowserControl and the scraper's output is the signal.
+
+### DataTables pages — all rows are in the raw HTML (no AJAX needed)
+
+Sites using the jQuery DataTables plugin render all rows in a `<tbody>` at page load — pagination, search, and tab-filtering happen entirely client-side. A plain HTTPS fetch gets every row across every tab, even though the browser only displays the active tab.
+
+Why this matters: don't add Puppeteer tab-clicking just because the UI has campus/category tabs. Verify first with `html.match(/<tr[^>]*class="row-\d+"/g)?.length` — if the count equals the total shown in all tabs combined, the data is all inline.
+
 ---
 
 ## Step 5 — File naming convention
