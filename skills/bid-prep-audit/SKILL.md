@@ -1,7 +1,7 @@
-# BICC Monthly Audit Skill
+# Bid Prep Audit Skill
 
 ## Trigger
-User types `/bicc-audit`
+User types `/bid-prep-audit`
 
 ## What This Does
 Runs a full monthly audit of two folders:
