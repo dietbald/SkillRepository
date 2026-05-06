@@ -44,6 +44,7 @@ Claude will handle the clone, junction/symlink, and command copy automatically, 
 | `openclaw-workspace` *(submodule)* | OpenClaw workspace file maintenance — AGENTS.md, TOOLS.md, SOUL.md, etc. token budget audits, distillation. Upstream: [`win4r/openclaw-workspace`](https://github.com/win4r/openclaw-workspace). |
 | `llm-council` *(submodule)* | Run a question through 5 AI advisors who anonymously peer-review each other and synthesize a final verdict. Karpathy's LLM Council pattern. Upstream: [`tenfoldmarc/llm-council-skill`](https://github.com/tenfoldmarc/llm-council-skill). |
 | `logopedist-be` | Belgian speech-language therapist domain knowledge — RIZIV/INAMI nomenclature, eHealth/MyCareNet, regional rules (VAPH, AVIQ, COCOM…), GDPR, tax. For halingo.be work. |
+| `biccpayroll` | Generate BICC's semi-monthly payroll (Cutoff A 25th, Cutoff B 10th). Computes attendance from raw biometric+OBT+leave+OT sheets, generates the password-protected payroll xlsx, runs an 11-check verification. Windows-only (Excel COM via win32com). |
 | `odoo-v19-guide.md` | Odoo v19 Online (SaaS) customization expert. Single-file skill. |
 | `ollama-runner.md` | Local Ollama model runner. |
 | `uncodixfy.md` | Strip ChatGPT-/AI-tells from text (em-dashes, hedging, "delve", etc.). |
