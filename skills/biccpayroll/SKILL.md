@@ -1,6 +1,6 @@
 ---
 name: biccpayroll
-description: Generate BICC (Babasmas Industrial Construction Corp) semi-monthly payroll. Use when the user asks to "generate payroll", "make payroll for [period]", "process the [date] cutoff", "create the May 10 / Apr 25 / etc. payroll", or anything involving BICC's Admin Payroll workbook. Handles attendance computation from raw biometric+OBT+leave+OT sheets, generates the password-protected payroll xlsx, and runs an 11-check verification. Period-specific. Windows-only (Excel COM via win32com). Do NOT activate for non-BICC payroll, generic HR questions, or anything outside the `C:/Users/thiba/BICC/HR Payroll - Documents/` workbook structure.
+description: Generate BICC (Babasmas Industrial Construction Corp) semi-monthly payroll. Use when the user asks to "generate payroll", "make payroll for [period]", "process the [date] cutoff", "create the May 10 / Apr 25 / etc. payroll", or anything involving BICC's Admin Payroll workbook. Handles attendance computation from raw biometric+OBT+leave+OT sheets, generates the password-protected payroll xlsx, and runs an 11-check verification, and generates individual PDF payslips. Period-specific. Windows-only (Excel COM via win32com). Do NOT activate for non-BICC payroll, generic HR questions, or anything outside the `C:/Users/thiba/BICC/HR Payroll - Documents/` workbook structure.
 ---
 
 # BICC Payroll
@@ -206,3 +206,20 @@ When something feels off, check these first:
 - See `references/BICC_Pay_Types_and_Rules.md` for detailed pay-type behavior
 - See `references/payroll_logic_spec.md` for all Excel formulas
 - The user's auto-memory at `~/.claude/projects/.../memory/MEMORY.md` has additional lessons that update over time
+
+### Step 3 — Generate Payslips
+
+Once the payroll Excel file is finalized and verified, generate the individual PDF payslips for distribution.
+
+```bash
+python lib/generate_payslips.py \
+    --excel "C:/Users/thiba/BICC/HR Payroll - Documents/Admin Payroll {year}/{cutoff_folder}/New_Payroll_{dates}.xlsx" \
+    --sheet "Payroll {month} {day}" \
+    --output "C:/Users/thiba/BICC/HR Payroll - Documents/Admin Payroll {year}/{cutoff_folder}/payslips_{date}"
+```
+
+The script will:
+1. Open the encrypted workbook (password: `Monthly$24`).
+2. Read the list of employees from the specified Payroll sheet.
+3. For each employee, update the name selector in the **Payslip** sheet.
+4. Export the print area to a PDF named `Payslip - {Name} - {Period}.pdf`.
