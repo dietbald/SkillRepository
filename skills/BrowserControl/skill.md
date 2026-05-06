@@ -741,6 +741,29 @@ Why this works: React and Vue both update their internal state when `input`/`cha
 
 When NOT to use this: login forms with anti-bot checks (some sites detect that no keydown events fired) — use `page.type()` for username/password fields specifically.
 
+**Also fails on legacy non-React forms (Apache Wicket, JSF, classic ASP.NET WebForms).** The submit handler on these reads from server-side component state, not the DOM `.value`, so dispatching `input`/`change` events is a no-op — the form posts as if blank. Symptom: code looks like fields are filled, the form submits, server says "required field missing". Switch to `page.click(sel, { clickCount: 3 })` (to clear) + `page.type(sel, value, { delay: 40 })` for these forms. Verified on BPI BizLink (Wicket).
+
+### Hidden side-nav menus — extract `<a href>` and `page.goto()` directly
+
+Legacy enterprise portals (Apache Wicket, JSF, older Bootstrap admin themes) commonly render the full navigation tree into the DOM at page load, hide it with `display: none` on the container, and rely on a JS toggle to slide it open. Clicking the toggle (`☰` hamburger) often does NOT work via `mouse.click()` — the items remain rendered far off-screen (e.g. `x = -10283`) and any element-by-text click misfires.
+
+**Don't try to open the menu — extract the hrefs once, navigate by URL.** All menu items are `<a href="...">` in the hidden DOM:
+
+```javascript
+// One-time discovery: dump every menu link
+const links = await page.evaluate(() =>
+  [...document.querySelectorAll('a')]
+    .filter(a => a.href && a.innerText?.trim())
+    .map(a => ({ text: a.innerText.trim(), href: a.href }))
+);
+console.log(JSON.stringify(links, null, 2));
+// Then navigate directly: await page.goto(links.find(l=>l.text==='Statement of Account').href);
+```
+
+Why this works: hidden ≠ unrendered. The `<a>` elements are fully present with valid hrefs; only the visual styling is suppressed. `page.goto(href)` skips the toggle entirely. Verified on BPI BizLink (Wicket).
+
+For Wicket portals specifically, the menu hrefs follow `?<n>-1.ILinkListener-menuPanel-zeroLevelMenu-<group>-recursiveMenu-rows-<row>-row-menuLink` where `<n>` is a per-session id — capture them per-session, don't hardcode `<n>`.
+
 ### Stale element references — "Node is either not clickable or not an Element"
 
 This Puppeteer error means an `ElementHandle` was stored before a navigation, then used after — the node no longer exists in the new page's DOM.
@@ -1148,6 +1171,56 @@ Symptoms that the trusted-click path is needed:
 - **The href is a `blob:` URL** — these only exist inside the originating page's context. `https.get` and `fetch` from outside the page will fail. Trusted-click + CDP capture is the only way (verified on Proton recovery kit downloads).
 
 Pace these portals: Google Workspace rate-limits at ~20 rapid downloads → forces password re-verify. Add ≥ 2 second delay between downloads on any portal whose links are session-tokened.
+
+### Capturing PDF/binary attachment downloads — CDP `Fetch` domain at Response stage
+
+When a portal returns a download as a regular HTTP response (`Content-Type: application/pdf` + `Content-Disposition: attachment`), Chrome consumes the response body for its download flow before puppeteer can read it. Three approaches that all FAIL — don't waste time on them:
+
+1. **`Browser.setDownloadBehavior` + `Browser.downloadWillBegin`** — click registers, no file ever lands in the configured download dir.
+2. **`page.on('response', async r => r.buffer())`** — response IS detected with correct headers, but `r.buffer()` throws `Could not load response body for this request`.
+3. **`Network.responseReceived` + `Network.getResponseBody`** — detects the requestId, but `getResponseBody` returns `Protocol error: No resource with given identifier found`. Download responses are evicted from Chrome's network cache faster than the puppeteer event loop can call back.
+
+**The working approach: CDP `Fetch` domain at Response stage**, which PAUSES the request before Chrome consumes it.
+
+```javascript
+const cdpClient = await page.target().createCDPSession();
+await cdpClient.send('Fetch.enable', {
+  patterns: [{ urlPattern: '*', requestStage: 'Response' }]
+});
+
+const buf = await new Promise((resolve) => {
+  const handler = async (event) => {
+    const { requestId, responseHeaders, responseStatusCode } = event;
+    const ct = (responseHeaders || []).find(h => h.name.toLowerCase() === 'content-type')?.value || '';
+    const cd = (responseHeaders || []).find(h => h.name.toLowerCase() === 'content-disposition')?.value || '';
+    if (ct.includes('application/pdf') || cd.includes('attachment')) {
+      const { body, base64Encoded } = await cdpClient.send('Fetch.getResponseBody', { requestId });
+      const captured = base64Encoded ? Buffer.from(body, 'base64') : Buffer.from(body);
+      // MUST fulfill so Chrome doesn't hang
+      await cdpClient.send('Fetch.fulfillRequest', {
+        requestId, responseCode: responseStatusCode,
+        responseHeaders, body: captured.toString('base64')
+      });
+      cdpClient.off('Fetch.requestPaused', handler);
+      resolve(captured);
+    } else {
+      await cdpClient.send('Fetch.continueRequest', { requestId });
+    }
+  };
+  cdpClient.on('Fetch.requestPaused', handler);
+});
+
+await cdpClient.send('Fetch.disable');
+fs.writeFileSync(savePath, buf);
+```
+
+Critical points:
+- `requestStage: 'Response'` (not `'Request'`) — you need response headers to identify the PDF, then grab the body.
+- After capturing, MUST call `Fetch.fulfillRequest` (or `continueRequest` for non-matches) or Chrome stalls indefinitely.
+- Always `Fetch.disable` between iterations so handlers don't accumulate.
+- Validate magic bytes: `buf.slice(0,4).toString() === '%PDF'`.
+
+Verified on BPI BizLink (Apache Wicket portal — `bpibizlink.com`). Likely the right approach for any other portal where Browser/Network domains all fail to capture an attachment download.
 
 ### `<textarea readonly>` values are invisible to `innerText` — read `.value` or parse HTML
 
