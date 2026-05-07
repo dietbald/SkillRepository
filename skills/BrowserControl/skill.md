@@ -97,6 +97,62 @@ curl -s http://127.0.0.1:9222/json/version
 
 **ChromeDebug profile note:** `--user-data-dir=C:\ChromeDebug` (Windows) or `~/.chromedebug` (Linux) is a dedicated profile separate from the user's regular Chrome. Sessions persist between runs. Never delete this directory or sessions will be lost.
 
+**Closing the last tab kills the whole Chrome process.** Chrome exits when no windows remain. If a script or `/json/close/<id>` call closes the only remaining tab, the debug port goes down and subsequent `puppeteer.connect()` calls fail with `ECONNREFUSED`. Always keep at least one tab alive — open a new one (`/json/new?<url>`) before closing the last existing one, or relaunch Chrome from scratch.
+
+### Connect-via-debug-port vs `puppeteer.launch()` — choose by use case
+
+These are TWO different patterns with different trade-offs:
+
+- **`puppeteer.connect({ browserURL: 'http://127.0.0.1:9222' })`** — attaches to an already-running Chrome (debug-port mode). Use during interactive development when the user has a Chrome window open with persistent cookies/sessions. The script does NOT own the Chrome process and must NOT kill it on exit.
+
+- **`puppeteer.launch({ executablePath, headless: 'new', userDataDir })`** — spawns and owns the Chrome process. Use for unattended/scheduled scripts. `await browser.close()` cleans up the entire process tree; no `taskkill` or PID juggling needed.
+
+```javascript
+// ✅ Unattended pattern — Chrome lifecycle managed by puppeteer
+const puppeteer = require('puppeteer-core');
+const browser = await puppeteer.launch({
+  executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+  headless: 'new',
+  userDataDir: 'C:\\ChromeDebug<TaskName>',   // dedicated, persists session cookies
+  defaultViewport: { width: 1920, height: 1080 },
+  protocolTimeout: 180000,
+  args: ['--disable-gpu', '--no-first-run', '--no-default-browser-check'],
+});
+try {
+  const page = await browser.newPage();
+  // ... do work ...
+} finally {
+  await browser.close();   // kills Chrome cleanly, zero leaks
+}
+```
+
+Don't mix: never use `taskkill` against a Chrome started with `puppeteer.launch()` (puppeteer's `browser.close()` handles it), and never call `browser.close()` against a `puppeteer.connect()` session (it'll terminate the user's Chrome).
+
+**When you must kill Chrome manually**, filter by command-line, NOT window title — Chrome doesn't put debug port or profile path in `WINDOWTITLE`, so `taskkill /FI "WINDOWTITLE eq *port=9223*"` matches nothing. Use:
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" |
+  Where-Object { $_.CommandLine -like '*<your-user-data-dir>*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+### Recovering from a stuck tab — `puppeteer.connect()` hangs at `Network.enable`
+
+Symptom: `puppeteer.connect()` succeeds but `browser.pages()` never returns, eventually erroring with `ProtocolError: Network.enable timed out` from `NetworkManager.addClient`. Cause: an existing tab in Chrome got into a bad state (often a stale Wicket / OAuth / heavy-SPA URL) and won't respond to CDP. Puppeteer initializes every existing page on connect, so one stuck tab blocks the whole connect.
+
+Recover via Chrome's HTTP DevTools API directly — bypass puppeteer:
+```bash
+# 1. List tabs
+curl -s http://127.0.0.1:9222/json/list
+
+# 2. Open a fresh tab on a known-good URL FIRST (so closing the stuck one doesn't kill Chrome)
+curl -s -X PUT "http://127.0.0.1:9222/json/new?https://www.example.com/"
+
+# 3. Close the stuck tab by id
+curl -s -X PUT "http://127.0.0.1:9222/json/close/<stuck-tab-id>"
+```
+
+Then `puppeteer.connect()` works again. If the symptom keeps recurring, the underlying page is the issue — relaunch Chrome with a fresh `--user-data-dir`, or switch to the `puppeteer.launch()` pattern above for that workflow.
+
 #### Linux troubleshooting — when chromium fails to bind 9222
 
 1. **Snap chromium can't write to a user-data-dir outside its confinement.** `/snap/bin/chromium` aborts with `Failed to create <user-data-dir>/SingletonLock: Permission denied (13)` even on directories you own. Solution: launch the **puppeteer-bundled** chrome instead — it has no sandbox restrictions:

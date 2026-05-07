@@ -148,6 +148,22 @@ Recipe at `C:/Repos/bizlink_txhist.js`. About 30 seconds for all three formats.
 - **Mobile Check Deposit** / **Check Deposit Inquiry** — untested.
 - **User Profile** / **Change Password** / **Device Management** — untested.
 
+## Statement of Account PDFs contain the full transaction list
+
+Each monthly Statement PDF is **5 pages** (≈ 340–450 KB):
+- **Page 1** — account summary (beginning balance, total credits/debits broken down by source, ending balance)
+- **Pages 3–5** — full transaction-level detail: `Date | Description | Ref | Details | Debit | Credit | Running Balance` (same columns as the Transaction History CSV)
+
+So the 10 saved monthly statements PLUS the 90-day Transaction History gives **continuous transaction-level coverage from May 2025 onward**. For consolidated analysis, parse the PDFs (text is selectable, no OCR needed — `pdftotext` works) and concatenate with the Last-90-Days CSV.
+
+## "BPI BizLink Downtime Advisory" page — usually NOT real downtime
+
+Navigating to a stale Wicket URL (e.g. an old `?<n>-<m>.IBehaviorListener-...` link from a previous session) renders a page titled **"BPI BizLink Advisory"** that says *"BPI BizLink is currently undergoing maintenance activities."* This is misleading — BizLink itself is up. Recover by navigating to `https://www.bpibizlink.com/` (the canonical entry point), which redirects to the login page or `/fo/main` if a session is still alive. Do NOT conclude the site is in maintenance from this page alone — verify via a fresh browser tab to the canonical URL.
+
+## Unattended weekly snapshot
+
+`C:/Repos/bizlink_weekly.js` runs the full workflow under `puppeteer.launch()` (no debug port, no manual cleanup) — login, idempotent statement download, weekly-stamped Transaction History + Account Portfolio in 3 formats each, sign out. Chrome lifecycle is owned by puppeteer; `browser.close()` leaves zero leaked processes. About 50 seconds end-to-end. Schedule via Task Scheduler with `bizlink_weekly_install_task.bat` (defaults to Monday 07:00).
+
 ## Gotchas summary
 
 - Wicket session-id `<n>` in URL changes per session — never hardcode menu hrefs. Always start from `/fo/main`, find menu link by visible text, then `page.goto(href)`. Helper `gotoMenuByLabel()` does this.
