@@ -116,17 +116,48 @@ Total: ~10 seconds per statement, 10 statements ≈ 100 s.
 
 Example: `BPIBizLink_1470006974_FEB28_2026-MAR31_2026.pdf`
 
+## Account Portfolio (FC9210) — Save as PDF / XLS / CSV
+
+Verified working 2026-05-07. All three formats served as `<a>` links with stable labels "Save as PDF" / "Save as XLS" / "Save as CSV". Same Fetch-domain interception, triggered by real `page.mouse.click()` on the link coords (NOT `window.location.href = url` — that fails to trigger the export endpoint). PDF response is `application/pdf`, XLS is `application/vnd.ms-excel`, CSV is `text/csv`. Filenames suggested by server: `AccountPortfolioReport<DDMMYYYY><HHMMSS><CORP><USER>.<ext>`.
+
+Recipe at `C:/Repos/bizlink_portfolio.js`. About 1 second per format.
+
+## Transaction History (FC9220) — Save as PDF / XLS / CSV / HTML
+
+Verified working 2026-05-07 with **219 transactions** over Last 90 Days. Hard limit confirmed: server rejects any From-date earlier than today minus 90 days with the feedback message `"From and To Dates should be later than MM/DD/YYYY."`. For older history, use the Statement of Account PDFs (last 10 months available).
+
+Workflow:
+1. Navigate to Transaction History (`gotoMenuByLabel(page, 'Transaction History')`)
+2. Select account dropdown
+3. Select period dropdown — `Last 7 Days` (`'2'`), `Last 30 Days` (`'3'`), `Last 60 Days` (`'4'`), `Last 90 Days` (`'5'`), `Custom Date Range` (`'6'`)
+4. For Custom Date Range: set `#dateFrom` and `#dateTo` via JS `.value` setter in **MM/DD/YYYY** format (the picker is masked — `page.type` strips non-digits and `DD/MM/YYYY` gets reinterpreted)
+5. Verify the account is still selected after period change (sometimes resets, reselect if needed)
+6. Click Search button (`input[type="submit"][value="Search"]`)
+7. Wait ≈ 8 s for results
+8. The PDF/XLS/CSV/HTML links live in `<table class="actTable">` whose parent `<div class="report_box">` is `display: none`. Use **JS `.click()`** (not real mouse click) to trigger them — they work despite being hidden.
+9. Capture via Fetch interception. Filenames: `TRANSACTION HISTORY REPORT<CORP><USER><DDMMYYYY><HHMMSS>.<ext>`.
+
+Recipe at `C:/Repos/bizlink_txhist.js`. About 30 seconds for all three formats.
+
+**Period dropdown values** (numeric, found in `select[name*="dateRangePanel:viewingType"]`):
+- `0` Current Day · `1` Previous Day · `2` Last 7 Days · `3` Last 30 Days · `4` Last 60 Days · `5` Last 90 Days · `6` Custom Date Range
+
 ## Other modules (not yet automated)
 
-- **Transaction History** (`?<n>-1.…rows-1-row-menuLink`) — for line-item history (last 90 days per BPI help docs). Same Wicket pattern — same Fetch interception trick should work.
-- **Transfer to Own Accounts**, **Pay BPI / non-BPI Accounts**, **Pay Bills**, **Pay Government** (BIR, SSS, PhilHealth, Pag-IBIG) — payment flows, untested.
-- **Statement of Account itself caps at 10 months.** For older statements, branch / phone request only.
+- **Transfer to Own Accounts**, **Pay BPI / non-BPI Accounts**, **Pay Bills**, **Pay Government** (BIR, SSS, PhilHealth, Pag-IBIG) — payment flows, **untested and risky** (Maker-staged transactions can be Authorizer-approved). Do not script unless explicitly asked.
+- **Mobile Check Deposit** / **Check Deposit Inquiry** — untested.
+- **User Profile** / **Change Password** / **Device Management** — untested.
 
 ## Gotchas summary
 
-- Wicket session-id `<n>` in URL changes per session — never hardcode, always pull from current `page.url()` or use the path-only navigation
+- Wicket session-id `<n>` in URL changes per session — never hardcode menu hrefs. Always start from `/fo/main`, find menu link by visible text, then `page.goto(href)`. Helper `gotoMenuByLabel()` does this.
 - `display: none` side menu — never try to click visible nav items, navigate by href
 - Login form rejects React-style bulk setter — use `page.type()` with delay
+- Datepicker on `#dateFrom` / `#dateTo` is **masked input** — `page.type` strips non-digits. Set via JS `.value` and dispatch input/change/blur. Format must be **MM/DD/YYYY**.
+- Export links inside `<div class="report_box">` are `display: none` until "Save As" is clicked. Bypass entirely with JS `.click()` on the hidden `<a>` — Wicket onclick fires regardless of visibility.
+- `window.location.href = exportUrl` does NOT trigger the export endpoint. Use real `page.mouse.click()` on visible export links, or JS `.click()` on hidden ones.
+- After period change in Transaction History, the account dropdown sometimes resets — verify and reselect before submitting.
+- Transaction History hard limit: 90 days lookback. Server feedback: *"From and To Dates should be later than MM/DD/YYYY."* For older data, use Statement of Account PDFs (10 months max).
 - Download button needs `Fetch` domain interception, not Browser/Network
 - Always re-`page.goto(SOA_URL)` between downloads, don't reuse the page state
 - Account-select → period-select dropdown is AJAX, sleep 3 s minimum
