@@ -1,24 +1,21 @@
 # Shared / cross-cutting features
 
-**Migration area** for spec contracts that don't fit a single product area: shared error pages, shared utilities (zip-code lookup, etc.).
-
 ## What this area covers
 
-Cross-cutting helpers used by many areas — error/404/500 pages, ZIP code lookup (Belgian postal codes bundled JSON), shared widgets.
+Cross-cutting helpers used by many other areas — the shared error pages and the Belgian ZIP-code lookup widget that auto-completes city / locality from a postal code.
 
-## Spec contracts (Phase 2)
+## Features in this area
 
-- **error-pages** — Feature: shared/error-pages
-  - Path: `02-specs/shared/error-pages/spec.md`
-- **zip-code-lookup** — Feature: shared/zip-code-lookup
-  - Path: `02-specs/shared/zip-code-lookup/spec.md`
+- Error pages — the user-facing not-found and unexpected-error pages, reached when the user navigates to an invalid URL or an unrecoverable error occurs.
+- ZIP code lookup — auto-complete widget that, given a Belgian postal code, suggests the correct city / locality (and the language it falls under). Used wherever the user enters a Belgian address.
+
+## Key product behaviors
+
+- The error pages keep the practice's branding (logo, accent color) so the user knows they are still inside Halingo.
+- The ZIP-code lookup uses the official list of Belgian postal codes; it covers the full national dataset (Flemish, Walloon, Brussels, German-speaking community).
+- The lookup is forgiving — partial codes return matching candidates, and the user picks from a short list rather than typing the whole locality by hand.
 
 ## Cross-references
 
-- **Belgian ZIP code lookup**: see `references/from-source/features/belgian_zip_code_lookup.md` — bundled ~2700-row JSON, case-sensitive substring scan.
-- **Shared utilities**: `references/from-source/features/shared_utilities.md` — generatePDF (HTML→PDF), zip-code lookup, admin impersonation.
-- **PDF generation**: `references/from-source/features/pdf_generation.md` — `html-pdf` (PhantomJS) pipeline, do NOT port to mono repo.
-
-## Phase 1 discovery
-
-_No standalone Phase 1 discovery file for the shared area; ZIP lookup is documented under `references/from-source/features/belgian_zip_code_lookup.md`. Error pages are not separately documented in Phase 1._
+- Practice Branding — practice name and address use the ZIP lookup at create time.
+- Patient Data Privacy — patient address fields use the ZIP lookup at create / edit time.

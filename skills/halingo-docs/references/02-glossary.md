@@ -5,7 +5,7 @@ Belgian healthcare and Halingo-specific terminology used throughout this documen
 ## Regulatory and institutional
 
 - **RIZIV** *(NL)* / **INAMI** *(FR)* — *Rijksinstituut voor Ziekte- en Invaliditeitsverzekering* / *Institut National d'Assurance Maladie-Invalidité*. The Belgian national health insurance institute. Sets tariffs, nomenclature, and reimbursement rules for healthcare providers.
-- **De Conventie** — the multi-year tariff convention published by RIZIV that speech therapists may opt into ("geconventioneerd"). It binds them to standard tariffs in exchange for reimbursement guarantees. The Aug 1 2024 convention is currently in force; rule changes from that update are documented in `full_documentation/compliance_riziv.md`.
+- **De Conventie** — the multi-year tariff convention published by RIZIV that speech therapists may opt into ("geconventioneerd"). It binds them to standard tariffs in exchange for reimbursement guarantees. The Aug 1 2024 convention is currently in force; rule changes from that update are summarised in the helpdesk article `compliance-riziv.md`.
 - **Ziekenfonds** *(NL)* / **Mutualité** *(FR)* — Belgian sickness fund / mutual health insurer. Patients are members of one; reimbursements flow through it.
 - **Medattest** — third-party supplier of pre-printed RIZIV form booklets (I21 / I11 certificates). Referenced in printing articles.
 
