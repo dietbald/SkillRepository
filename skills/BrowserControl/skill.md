@@ -25,6 +25,12 @@ When inspect/eval don't fit (multi-step navigation, click + capture, file-downlo
 
 **Don't poll-with-sleep when a script will return in <30 s.** The `until grep -q ... do sleep` pattern adds a 12-second floor to fast scripts. Use foreground Bash (no `run_in_background`) for sub-30s scripts and let the call return naturally.
 
+**When the harness backgrounds a script anyway, poll cheaply.** Any node/puppeteer Bash that takes more than a couple of seconds gets auto-converted to a background task by the harness — even when you didn't pass `run_in_background: true`. Do NOT match this with a heavy `sleep 5` + content-grep loop. Use the minimal pattern:
+```bash
+until [ -s "$OUT" ]; do sleep 1; done && cat "$OUT"
+```
+`-s` (file non-empty) returns the moment the script writes its first byte; `sleep 1` keeps the floor at ~1s instead of 5–12s. Don't combine with `grep -q "<final marker>"` unless the script genuinely emits intermediate output you need to skip past — usually it doesn't.
+
 ---
 
 ## Operating principle: scope every change to the smallest unit that needs it
