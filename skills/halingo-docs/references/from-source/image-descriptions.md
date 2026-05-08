@@ -1,0 +1,63 @@
+# Image Descriptions for Halingo Documentation Assets
+
+- **115002590033**: A small circular profile picture of a man with glasses and a beard, next to the name "Kurt Peeters" on a teal background.
+- **115002594994**: A drop-down menu under the name "Kurt Peeters" showing options for "Profiel" (Profile) and "Uitloggen" (Log out) on a teal header with alert and help icons.
+- **115002595034**: A user profile details section titled "Algemene gegevens" showing "Voornaam" (Kurt), "Achternaam" (Peeters), "Geslacht" (Man), "Aanspreking" (Mijnheer), and "Geboortedatum" (17 maart 1992).
+- **15646559500700**: A generic grey silhouette placeholder image for a user profile avatar.
+- **16802014114716**: A notification banner with an alert icon and text "Opgelet voor terugbetaling: De patiënt is ouder dan 18 jaar" (Attention for reimbursement: The patient is older than 18 years).
+- **16802014114844**: An invoice or billing summary table showing "Logopedische therapie: 30 min" on Date 5/11, quantity 1, price per session €36,14, total €36,14. Also lists "Terugbetaling" €0,00, "Remgeld" €36,14, and "TOTAAL" €36,14.
+- **16802059396764**: A cropped view of a Belgian medical certificate ("Getuigschrift voor verstrekte hulp") filled out for patient "Doe Jane", showing nomenclature number "700991" on date "06/11/2024".
+- **16802059397276**: Another cropped view of a Belgian medical certificate for patient "Doe Jane", showing nomenclature number "701002" on date "07/11/2024".
+- **16802059397916**: A split-screen view of a PDF viewer showing an "Aanvraagformulier 08/11/2024.pdf" with standard form details for "Jane Doe" and therapist "Emma Selleslagh".
+- **16802059398556**: A split-screen view of a PDF viewer showing "form_extension_nl" which is a "Kennisgeving van verlenging van behandeling van een stoornis" (Notice of extension of treatment) for patient "Jane Doe".
+- **16882212886300**: A patient dashboard interface in a medical app for "Afasie" showing session counters, nomenclature codes, "Aanvangsbilan", "Documenten", and a button to "TERUGBETALING TOEVOEGEN".
+- **16882212891548**: Similar to the previous image, a patient dashboard interface for a reimbursement plan for "Afasie", showing remaining sessions and nomenclature codes.
+- **16882241661212**: A modal window titled "Afspraak toevoegen" (Add appointment) for therapist "Emma Selleslagh" and patient "Jane Doe", creating a "Sessie" for "Spraakprobleem" on "14/11/2024".
+- **17685048131740**: A cropped table row showing "Evaluatiesessie", Date "31/12", Quantity "1", Price per session "€ 72,28", Total "€ 72,28".
+- **17685048132764**: A tutorial screenshot with red numbered boxes (1 to 4c) highlighting steps to create a new report ("Nieuw verslag") under "Documenten" using templates.
+- **17725920107164**: macOS Printers & Scanners settings showing "EPSON LX-350" as default and other offline printers like Canon MG3600, DocuCentre-IV, and HP OfficeJet.
+- **17725920110876**: macOS confirmation dialog asking "Are you sure you want to remove the printer 'DocuCentre-IV C2263'?"
+- **17725934330652**: macOS Printers settings showing a list of printers including Canon MG3600, DocuCentre-IV C2263, EPSON LX-350, and HP OfficeJet Pro 8020.
+- **17725934333852**: Identical to 17725934330652, showing the same macOS Printers settings list.
+- **18268909694876**: A French invoice document ("Facture") for "Monsieur Dale John" from "Emma Selleslagh" for "Traitement logopédique: 30 min".
+- **18268937594268**: A Dutch version of the invoice document ("Factuur") for "Meneer Dale John" from "Emma Selleslagh" for "Logopedische therapie: 30 min".
+- **18268937595548**: Another Dutch invoice header document ("Nieuwe factuur") from "Groepspraktijk De Logobrug" for "Dale John".
+- **18268937876636**: A French invoice header document ("Nouvelle facture") from "Groepspraktijk De Logobrug" for "Dale John".
+- **18954996796828**: A UI modal for "Bilan toevoegen" with a dropdown for "Type bilan" showing options like "Evolutiebilan", "Hervalbilan", and "Verlengingsbilan".
+- **2017-09-15_14h55_56.png**: A settings page section for "Inloggegevens" (Login details) showing active and unvalidated email addresses and buttons to change email or password.
+- **360007945794**: "Instellingen voor delen van agenda" (Calendar sharing settings) showing a toggle to allow viewing on other devices and a unique URL to copy.
+- **360007946934**: A small dropdown menu showing "Agenda toevoegen" options including "Secundaire agenda", "Feestdagenkalender", "Uit bestand", and "Van internet".
+- **360007991833**: Another small dropdown menu showing "Agenda toevoegen" with "Nieuwe agenda", "Door interessante agenda's browsen", and "Via URL".
+- **360007992013**: A modal to add calendar "Via URL" containing an input field for "Agenda-URL" and a checkbox for "De agenda openbaar toegankelijk maken".
+- **360009826834**: A sidebar menu showing icons and labels: "Dashboard", "Agenda", "Patiëntendossiers", "Financieel" (selected), "Praktijk", "Riziv".
+- **360009826894**: A table row showing a patient named "Aline Buck" with date "08/09/2017", amount "€ 505,00", invoice number "BUC-20170908-023", and two status boxes labeled "OPENSTAAND" (Outstanding).
+- **360009827414**: A simple teal button with the text "GENEREER" (Generate).
+- **360009827734**: A table row showing "Christelijke Mutualiteit van het arrondissement Turnhout", date "27/07/2018", amount "€ 41,76", reference "BUC-20180727-121", status "OPENSTAAND", and "1 patiënt".
+- **360009880033**: A table row for "Aline Buck" with a tooltip or pop-up box displaying "01*0001/9" next to a clipboard icon.
+- **360009880133**: A tabbed navigation menu with options "FACTUREN", "VERZAMELSTAATFACTUREN" (selected), "COMMISSIE", and "OVERZICHT SESSIES".
+- **360009880293**: A small dropdown menu showing print options: "Per ziekenfonds" and "Per patiënt".
+- **360011744034**: A sidebar menu with items "Dashboard", "Agenda", "Patiëntendossiers", "Financieel", "Praktijk" (selected), "Riziv".
+- **360011789793**: A rectangular button or widget with a Euro symbol (€) and the word "ABONNEMENT" underneath.
+- **360011789853**: A dashboard section showing referral stats: an "Aanbrengbonus" (Referral bonus) button, amount saved, free months left, and colleagues convinced.
+- **360031930994**: A modal window titled "Getuigschrift" with settings for printing a medical certificate, showing input fields for margins and highlighting the top margin "Marge boven (cm)".
+- **360032753633**: Same as 360031930994 but the teal highlight box is on the left margin "Marge links (cm)" input field instead.
+- **blobid0.png**: A sidebar menu with the Halingo logo at the top, a practice selector showing "halingo", and menu items with "Patiëntendossiers" selected.
+- **blobid1.png**: A patient card or profile summary for "Arthur De Coninck" showing his photo, a "Wachtlijst" (Waitlist) tag, address, phone, and email.
+- **blobid2.png**: A patient dashboard section for "Afasie" showing nomenclature codes and an arrow pointing to a "VERWIJDER" (Remove) button under the "Documenten" section.
+- **blobid3.png**: A confirmation modal window titled "Verwijderen" asking "Ben je zeker dat je het geselecteerde item wens te verwijderen?" with a "JA" (Yes) button.
+- **blobid4.png**: A section titled "Documenten" showing text "Geen terugbetalingsbestanden gevonden" (No reimbursement files found) and a teal arrow pointing to a circular teal "+" (plus) button.
+- **blobid5.png**: A close-up of a circular teal "+" (plus) button, out of focus.
+- **blobid6.png**: A modal window titled "Nieuw verslag" (New report) with a teal arrow pointing to the "UPLOADEN" tab.
+- **blobid7.png**: A teal rectangular button with the text "UPLOAD".
+- **blobid8.png**: A "Tags" section showing grey tags and a highlighted teal tag for "brief paasvakantie".
+- **mceclip0.png**: A close-up of a drop-down trigger showing a profile picture of Scrabble tiles and the text "halingo" with a mouse cursor hovering over it.
+- **mceclip1.png**: A drop-down menu for selecting workspaces or practices, showing options with different avatars.
+- **mceclip10.png**: A modal window titled "Afspraak toevoegen" (Add appointment) with tabs like "PRIVÉ" and inputs for Title, Start, and End.
+- **mceclip2.png**: A circular profile picture of a man with glasses and a beard on a grey background.
+- **mceclip3.png**: A dashed box containing a download icon and the text "Sleep een afbeelding of klik om er één te selecteren."
+- **mceclip4.png**: A small teal button with the text "Ja" (Yes).
+- **mceclip5.png**: An input field with placeholder text "Vul je wachtwoord in *" (Enter your password *).
+- **mceclip6.png**: A dashed box for file uploading with a download icon and text "Sleep de bestanden hier of klik om ze te selecteren."
+- **mceclip7.png**: An uploaded file indicator inside a dashed box showing a document icon, filename "54247503.pdf", and an "x" to remove it.
+- **mceclip8.png**: A button "E-mailadres verifiëren" and text "Of door te navigeren naar deze link".
+- **mceclip9.png**: A teal button with the text "Stuur validatie e-mail" (Send validation email).
