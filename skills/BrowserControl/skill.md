@@ -4,6 +4,29 @@ You are controlling a Chrome browser via Puppeteer connected to a remote debug p
 
 ---
 
+## Operating principle: iterate fast — use prebuilt diagnostic tools, not new scripts
+
+**Do NOT write a fresh puppeteer script for every diagnostic question.** That pattern (Write file → `node` it → poll output → Read result) costs 4–5 Bash calls and 10+ seconds of wall time PER question. Instead, use the two prebuilt tools at `~/.claude/skills/BrowserControl/`:
+
+- **`node ~/.claude/skills/BrowserControl/inspect.js`** — one-call rich snapshot of the active page: URL, title, every input (id/name/type/placeholder/visible/disabled), every button (text/id/aria-disabled), every link (text/href/visible), every select (with options[]), every table (headers + sample row), visible feedback/error/warning elements, iframes. Sub-options: `--frame N`, `--html <selector>` (dump outerHTML of one element), `<url-fragment>` to pick a specific tab, `--port 9223`.
+
+- **`node ~/.claude/skills/BrowserControl/eval.js "<expression>"`** — runs an arbitrary JS expression in the active page and prints the JSON result. Examples:
+  ```bash
+  node ~/.claude/skills/BrowserControl/eval.js "document.title"
+  node ~/.claude/skills/BrowserControl/eval.js "document.querySelector('#dateFrom').value"
+  node ~/.claude/skills/BrowserControl/eval.js "[...document.querySelectorAll('select')].map(s => ({name: s.name, val: s.value}))"
+  ```
+
+When inspect/eval don't fit (multi-step navigation, click + capture, file-download flows), THEN write a script — but keep it focused, and don't re-implement what these tools already do.
+
+**Default to DOM inspection over screenshots.** Screenshots show pixels but hide IDs, names, hrefs, `display: none` ancestors, `aria-disabled` state, hidden `<input>` values, and `<textarea readonly>` content. `inspect.js` surfaces all of those in one call. Reach for `page.screenshot()` only when the question is genuinely about layout (overlap, off-screen positioning, render artefacts) — not "what's on this page".
+
+**Run independent diagnostic queries in parallel.** If you have N questions whose answers don't depend on each other, send N tool calls in one message — each `node eval.js …` runs concurrently against the same Chrome.
+
+**Don't poll-with-sleep when a script will return in <30 s.** The `until grep -q ... do sleep` pattern adds a 12-second floor to fast scripts. Use foreground Bash (no `run_in_background`) for sub-30s scripts and let the call return naturally.
+
+---
+
 ## Operating principle: scope every change to the smallest unit that needs it
 
 When you need a different network egress, user-agent, cookie jar, or proxy for ONE site, do NOT make a system-wide change. **Use per-process scoping always:**
