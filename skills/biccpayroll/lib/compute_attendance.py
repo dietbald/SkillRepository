@@ -35,7 +35,7 @@ import win32com.client
 sys.path.insert(0, str(Path(__file__).parent))
 from biccpayroll_config import (
     DAILY_EMPLOYEES, MONTHLY_EMPLOYEES, EXEMPT_EMPLOYEES, HABARADAS_LIKE,
-    EXCLUDED_NAMES, START_TIME, QUIT_TIME,
+    EXCLUDED_NAMES, START_TIME, QUIT_TIME, LUNCH_END,
     normalize_surname, get_employee_type, is_daily, is_excluded,
     get_surname, names_match,
 )
@@ -95,8 +95,16 @@ def count_working_days(d_from, d_to):
     return count
 
 
-def compute(attendance_file, start, end, holidays, lwd_resignations, new_hire_starts):
-    """Main computation. Returns dict keyed by surname."""
+def compute(attendance_file, start, end, holidays, lwd_resignations, new_hire_starts,
+            force_absent_days=None):
+    """Main computation. Returns dict keyed by surname.
+
+    force_absent_days: dict[surname -> set(date)] — days to mark as AWOL even if
+    biometric shows a punch. Used for HR judgment overrides (May 2026:
+    Mosquera Apr 20 — arrived 12:43 PM, treated as absent).
+    """
+    if force_absent_days is None:
+        force_absent_days = {}
     all_dates = [start + timedelta(days=i) for i in range((end - start).days + 1)]
     workdays = [d for d in all_dates if d.weekday() < 6]
     period_days = len(workdays)
@@ -136,7 +144,8 @@ def compute(attendance_file, start, end, holidays, lwd_resignations, new_hire_st
             continue
 
         bio = {}
-        for wd in workdays:
+        # Read all calendar days incl. Sundays — Sunday work is credited as bonus day
+        for wd in all_dates:
             # CRITICAL: TIME LOG covers full month — column = 5 + 2*(d-1)
             in_col = 5 + 2 * (wd.day - 1)
             out_col = in_col + 1
@@ -330,7 +339,11 @@ def compute(attendance_file, start, end, holidays, lwd_resignations, new_hire_st
                     all_outs.append(oi)
             eff_out = max(all_outs) if all_outs else None
 
-            present = eff_in is not None
+            # HR override: force-absent for specific (employee, date) — overrides any biometric
+            # Used when HR judges a heavily-late day as absent (May 2026: Mosquera Apr 20 case).
+            forced_absent = (surname in force_absent_days and wd in force_absent_days[surname])
+
+            present = eff_in is not None and not forced_absent
             late_m = ut_m = 0.0
 
             if present:
@@ -340,6 +353,9 @@ def compute(attendance_file, start, end, holidays, lwd_resignations, new_hire_st
                 if not is_hol:
                     if eff_in > START_TIME + 0.0001:
                         late_m = (eff_in - START_TIME) * 24 * 60
+                        # Subtract 1-hr lunch if arrival is after lunch ends (May 2026: Juayno case)
+                        if eff_in > LUNCH_END + 0.0001:
+                            late_m = max(0, late_m - 60)
                     if has_bio and eff_out is not None and eff_out < QUIT_TIME - 0.0001:
                         ut_m = (QUIT_TIME - eff_out) * 24 * 60
                 total_late += late_m
@@ -350,6 +366,17 @@ def compute(attendance_file, start, end, holidays, lwd_resignations, new_hire_st
                     hol_worked[wd] = holidays[wd]
             else:
                 absent_days.append(wd)
+
+        # Sunday-work credit: count Sundays where employee punched in as bonus days
+        # (outside regular schedule; no late/UT computation; May 2026: Futotana case)
+        for sd in all_dates:
+            if sd.weekday() != 6:
+                continue
+            if last_wd is not None and sd > last_wd:
+                continue
+            sun_bio_in = emp["bio"].get(sd, (None, None))[0]
+            if sun_bio_in is not None:
+                days_present += 1
 
         # Holiday credit
         holidays_not_worked = 0
@@ -440,13 +467,27 @@ def main():
     p.add_argument("--holidays", default="", help="Comma list 'YYYY-MM-DD:regular' or ':special'")
     p.add_argument("--lwd", default="", help="Mid-period resignations 'name=YYYY-MM-DD,...'")
     p.add_argument("--new-hires", default="", help="New hires 'name=YYYY-MM-DD,...'")
+    p.add_argument("--force-absent", default="",
+                   help="HR overrides for days to mark AWOL despite punch. "
+                        "Format 'surname=YYYY-MM-DD;YYYY-MM-DD,othersurname=YYYY-MM-DD'")
     args = p.parse_args()
 
     holidays = parse_holidays(args.holidays)
     lwd = parse_kv_dates(args.lwd)
     new_hires = parse_kv_dates(args.new_hires)
 
-    results = compute(args.attendance, args.start, args.end, holidays, lwd, new_hires)
+    # Parse --force-absent: 'mosquera=2026-04-20;2026-04-23,foo=2026-04-15'
+    force_absent_days = {}
+    if args.force_absent:
+        for entry in args.force_absent.split(","):
+            entry = entry.strip()
+            if not entry: continue
+            sn, dates_str = entry.split("=", 1)
+            sn = sn.strip().lower()
+            force_absent_days[sn] = {date.fromisoformat(d.strip()) for d in dates_str.split(";") if d.strip()}
+
+    results = compute(args.attendance, args.start, args.end, holidays, lwd, new_hires,
+                       force_absent_days=force_absent_days)
     with open(args.output, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nSaved: {args.output}")

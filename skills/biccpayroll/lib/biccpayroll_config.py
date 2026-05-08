@@ -54,6 +54,9 @@ LATE_COUNT_LIMIT = 3     # More than 3 late instances per month disqualifies
 
 START_TIME = 8.0 / 24.0   # 0.333333 = 8:00 AM (work day starts)
 QUIT_TIME = 17.0 / 24.0   # 0.708333 = 5:00 PM (work day ends)
+LUNCH_END = 13.0 / 24.0   # 0.541666 = 1:00 PM (end of lunch break)
+# Note: "very-late = absent" is NOT a deterministic threshold — it's an HR judgment.
+# Use compute_attendance.py's --force-absent CLI param to flag specific (employee, date) pairs.
 
 # ============================================================================
 # Base paths (Windows-specific — adjust BASE_PAYROLL for your machine)
