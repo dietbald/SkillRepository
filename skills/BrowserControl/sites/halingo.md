@@ -214,6 +214,29 @@ Auto-pricing (verified): a 30-min cabinet session for §2b.2 (taalontwikkeling) 
 
 `Meneer`, `Mevrouw`, `Mejuffrouw`, `Ouders van` (Belgian paediatric-specific), `dr.`, `Prof`, `ir.`
 
+## Verified pathology session-cap matrix
+
+Halingo's auto-populated `Totaal aantal sessies` per pathology, verified against Belgian RIZIV regulation (`logopedist-be` skill):
+
+| Halingo type | Pathology | Cap | RIZIV match |
+|---|---|---|---|
+| `b.1` | Afasie | 288 | ✅ |
+| `b.2` | Stoornissen receptieve/expressieve taalontwikkeling | 190 | ✅ |
+| `b.3` | Dyslexie/dysorthografie/dyscalculie | 140 | ⚠️ logopedist-be says 144; cross-check current RIZIV |
+| `b.6.3` | Chronische spraakstoornissen | 520 | ✅ + infinite renewal |
+| `f` | Dysfasie | 384 | ✅ (Neuropediatrician-only prescription) |
+
+Other pathologies (a, b.4, b.5, b.6.1, b.6.2, b.6.4, b.6.5, c.1, c.2, d, e, g) — caps not yet verified.
+
+## Pathology-specific nomenclature code series
+
+| Pathology | Code series | Settings (suffixes -316/-333/-355/-370/-381 = cabinet/group/school/rehab/hospital) |
+|---|---|---|
+| `b.2` | 713xxx | 713311 cabinet, 713333 group, 713355 school, 713370 rehab, 713381 hospital |
+| `b.3` | 714xxx | 714313 cabinet, 714335 group, 714350 school, 714372 rehab, 714383 hospital |
+| (initial bilan) | 711xxx (varies) | per pathology |
+| (shared) | 704115, 713016 | various |
+
 Plus collection subscriptions: `users.profileData`, `practices`, `practice`, `practicechat`, `pending_invoices`, `practiceInvoices`, `notifications.new`, `kadira_settings`, `AnalyticsUsers`, `plans`, `subscriptions`, `practiceUsers`, `referrals`, `treatments`, `bilans`, `reportsOfTreatment`, `documentsOfTreatment`.
 
 ## RIZIV pathology types — Halingo's Type dropdown
