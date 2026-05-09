@@ -241,3 +241,59 @@ Per the BDO extraction guide, save raw downloads to:
    └── certificates/
 ```
 Keep BDO's original filenames (`Tran_Hist_PdfAndXls.xls` etc.) — the recon pipeline dedupes by content hash.
+
+---
+
+## Production scripts
+
+Two ready-to-run extractors live next to this file:
+
+### `bdo_weekly_extract.js`
+
+Pulls the last N days (default 30) of Transaction History for every account configured in `.env` → `BDO_BOB_ACCOUNTS_JSON`. PDF + XLS per account. Output goes to `BDO_BOB_OUTPUT_DIR` if set, otherwise `process.cwd()`, into a dated `weekly_<YYYY-MM-DD>/` subfolder.
+
+```bash
+# Interactive — own Chrome + OTP prompt in terminal
+node ~/.claude/skills/BrowserControl/sites/bdo_weekly_extract.js
+
+# Connect to existing logged-in Chrome (skip login)
+node ~/.claude/skills/BrowserControl/sites/bdo_weekly_extract.js --connect 9222
+
+# Custom lookback (max ~92 by BDO policy)
+node ~/.claude/skills/BrowserControl/sites/bdo_weekly_extract.js --days 7
+```
+
+`puppeteer-core` must be reachable — run from a project that has it installed, or set `NODE_PATH=$PWD/node_modules`.
+
+### `bdo_extract_inquiries.js`
+
+Sweeps all 5 Inquiry archive pages (FT-Own, FT-Other, Wire, Outward Payment, Bills Payment) and downloads PDF + XLS + CSV reports for whichever ones return rows. Default range is 2020-01-01 → today, capturing the full multi-year archive in one run.
+
+```bash
+node ~/.claude/skills/BrowserControl/sites/bdo_extract_inquiries.js
+node ~/.claude/skills/BrowserControl/sites/bdo_extract_inquiries.js --connect 9222
+node ~/.claude/skills/BrowserControl/sites/bdo_extract_inquiries.js --from 01/01/2024 --to 12/31/2024
+```
+
+Output: `inquiries_<YYYY-MM-DD>/<FCxxxx>/<FCxxxx>_<from>_to_<to>.{pdf,xls,csv}`.
+
+### Required `.env` keys
+
+```
+BDO_BOB_CORP_CD=...                 # corporation code
+BDO_BOB_USER_CD=...                 # user id
+BDO_BOB_PSWD=...                    # password
+BDO_BOB_ACCOUNTS_JSON=[{"num":"7579","name":"Collection","value":"<dropdown-hash>"}, ...]
+BDO_BOB_OUTPUT_DIR=...              # optional; default = process.cwd()
+```
+
+The `value` per account is the dropdown option hash on FC9220 — find it once via `inspect.js` on the Transaction History page (look for `<select name="accountPanel:wmc:account">` options) and paste it into `.env`.
+
+### Windows Task Scheduler weekly run
+
+```powershell
+schtasks /Create /TN "BDO Weekly TxnHist" /SC WEEKLY /D SUN /ST 09:00 ^
+  /TR "powershell -NoExit -Command \"cd C:\Users\me\Documents\bdo; node ~/.claude/skills/BrowserControl/sites/bdo_weekly_extract.js\"" /F
+```
+
+The OTP prompt appears in the spawned PowerShell window — type the SMS code and the run completes in ~30s. There is no fully unattended path on this portal; OTP is required for every login.
