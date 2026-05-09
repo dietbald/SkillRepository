@@ -511,6 +511,21 @@ The modal has 4 tabs: AFSPRAAK / VERGADERING / PRIVÉ / OVERLEG. Default is AFSP
 
 If one patient is missing aanspreking/address, the validation error TOAST surfaces inline (not blocking modal) and OTHER patients still get invoiced (partial success).
 
+## Multi-user RBAC
+
+Halingo enforces practice-scoped isolation correctly. A user without practice membership:
+- Cannot access patient data via direct URL (`/patients/<id>` redirects to empty-state)
+- Cannot access another practice via direct URL (`/practices/<id>` same)
+- Sees an empty-state CTA on every list page: "Pas de cabinet / Vous n'avez pas de cabinet, créez un cabinet ou demandez à votre responsable de cabinet de vous inviter"
+
+**Locale switching:** FR locale shows "Tableau de bord / Agenda / Dossiers patient / Financier / Cabinet / INAMI / Rosa" (where INAMI = French equivalent of Belgian RIZIV).
+
+If a signed-up user hasn't filled their profile, the top-right user widget shows the raw email instead of a display name (e.g. `marcus.whitfield3931@proton.me`).
+
+## Auth endpoint intermittent on dev staging (2026-05-09 to 2026-05-10)
+
+Halingo dev staging exhibited auth instability — 5+ consecutive `/login` attempts returning "Internal server error" inline, then suddenly succeeding after a 2-minute back-off. Affects both test accounts independently. Implication: automation MUST retry-with-backoff on login attempts.
+
 ## Common interaction pitfalls
 
 - **Patient autocomplete typing intercepted by global search** — when an open modal has a `react-select` for Patiënt, do NOT type into it; the header search bar captures the keystrokes and navigates the page (dismissing the modal). Work around by clicking options with mouse or by setting the underlying React state programmatically.
