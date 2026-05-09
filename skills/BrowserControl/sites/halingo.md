@@ -228,6 +228,28 @@ Halingo's auto-populated `Totaal aantal sessies` per pathology, verified against
 
 Other pathologies (a, b.4, b.5, b.6.1, b.6.2, b.6.4, b.6.5, c.1, c.2, d, e, g) — caps not yet verified.
 
+## Form selectors differ between create-modal and detail-edit-mode
+
+The Halingo patient INSZ field has different DOM shapes in different contexts:
+
+| Context | Selector | Notes |
+|---|---|---|
+| New-patient modal (`/patients` → "+") | `input[name="SSN"]` | Plain `<input>` with mask `__.__.__-___.__` |
+| Patient detail INFO tab (`/patients/:id?tabIndex=0`) | NOT `input[name="SSN"]` (returns `null`) | INSZ field is wrapped in a different React component; query the DOM via inspect.js to find the correct path |
+
+Same caveat applies to other masked fields (DOB, phone). When extending automation to edit-mode, re-discover selectors via inspect.js per page rather than reusing the create-modal ones.
+
+## Reading numeric values (caps, counters, prices) from treatment view
+
+Treatment-view fields like "Totaal aantal sessies", "Aantal gebruikte sessies", "Sessies in halingo" are rendered as plain `<input type="text">` whose `.value` is the integer. The label-walk-up pattern often fails on React-MaterialUI wrappers — use value-pattern fallback:
+
+```javascript
+const numbers = [...document.querySelectorAll('input')]
+  .filter(i => i.offsetParent && i.value && /^\d+$/.test(i.value))
+  .map(i => i.value);
+// On treatment view: numbers[0] = totaalAantalSessies (cap), [1] = used, [2] = halingo-count
+```
+
 ## Pathology-specific nomenclature code series
 
 | Pathology | Code series | Settings (suffixes -316/-333/-355/-370/-381 = cabinet/group/school/rehab/hospital) |

@@ -1313,6 +1313,52 @@ Symptoms that the trusted-click path is needed:
 
 Pace these portals: Google Workspace rate-limits at ~20 rapid downloads → forces password re-verify. Add ≥ 2 second delay between downloads on any portal whose links are session-tokened.
 
+### Extracting numeric values from React forms — value-pattern query is the reliable fallback
+
+Label-walk-up (`querySelector('label')` → traverse parentElement → first `input`) often returns `null` on React apps where the label is wrapped in a `<MaterialUI Label>` container that doesn't share a clean parent with its input. Don't keep walking ever-higher — use a value-pattern query:
+
+```javascript
+// Find all visible inputs whose value looks like the number you want (cap, count, price, etc.)
+const numbers = [...document.querySelectorAll('input')]
+  .filter(i => i.offsetParent && i.value && /^\d+$/.test(i.value))
+  .map(i => i.value);
+// numbers[0] is usually "Totaal aantal sessies" cap, [1] is used count, etc. — verify by ordering
+```
+
+Why this works: React-controlled inputs always have their current value in `.value`, and the rendered order matches the visual layout. For pages with N numeric fields in known visual order, indexing into the result array is reliable. Verified on Halingo treatment view (cap, used-count, halingo-count).
+
+### Extracting IDs from DDP/WebSocket frames — capture wide slices
+
+Meteor DDP `result` messages can be 200-800 chars long. When extracting an entity ID via regex on captured frame text, slice at least **600 chars** of `payloadData`, not 200-400. Truncated slices drop the `"result":"<id>"` field entirely.
+
+```javascript
+const ws = [];
+cdp.on('Network.webSocketFrameReceived', e => ws.push({
+  d: 'received',
+  t: (e.response.payloadData || '').slice(0, 800)   // ≥600 — Meteor results can be long
+}));
+// Later:
+const id = ws.map(f => (f.t.match(/"result":"([A-Za-z0-9]{17})"/) || [])[1]).filter(Boolean)[0];
+```
+
+### Don't loop multiple `node eval.js` calls inside a single Bash heredoc
+
+A `for url in ...; do node eval.js > /tmp/x.txt ; done` loop inside one Bash invocation HANGS on the first iteration because the harness auto-backgrounds each `node` call and the loop's stdin/stdout never reconverges. Symptom: only the first `===` marker appears, then nothing.
+
+**Use one of these instead:**
+- **Parallel tool calls** — send N Bash invocations in one message, each with its own output file.
+- **Single Node script that does the iteration internally** — one connection, one loop, one writeFileSync per iteration, one bash call.
+
+```javascript
+// Single-script pattern for iterating across N entities
+for (const id of IDS) {
+  await page.goto(`/entity/${id}`, ...);
+  await sleep(4000);
+  const data = await page.evaluate(() => /* extract */);
+  fs.writeFileSync(`out/${id}.json`, JSON.stringify(data));
+}
+```
+
 ### Capturing PDF/binary attachment downloads — CDP `Fetch` domain at Response stage
 
 When a portal returns a download as a regular HTTP response (`Content-Type: application/pdf` + `Content-Disposition: attachment`), Chrome consumes the response body for its download flow before puppeteer can read it. Three approaches that all FAIL — don't waste time on them:
