@@ -417,6 +417,20 @@ Object.keys(Meteor.connection._methodHandlers).sort()
 
 **Bypass for state-machine UI restrictions:** The dropdown UI restricts BETAALD invoices to {Gemaild, Betaald}, but `Meteor.call('invoices.edit.state', {invoiceId, state: 'open'})` succeeds regardless — automation can revert state freely. The UI restriction is client-side only.
 
+## Therapieplan goals (long-term kanban)
+
+`/patients/<id>?tabIndex=4` → "Therapieplan op lange termijn" section is a **3-column Kanban**: `Te behandelen` → `In behandeling` → `Doel behaald`. The "+" add affordance only renders **on hover** of a column header, which is why empty-state UI looks like there's no add button.
+
+**DDP methods:**
+- `patientFile.therapies.long.add({patientFileId, category, goal, priority})` — returns new `_id`
+  - Allowed `category` enum (3 confirmed so far): `communication`, `taal`, `stem` — others rejected with "X is not an allowed value"
+  - Allowed `priority` enum: `high` / `medium` / `low` (string only — numeric rejected)
+- `patientFile.therapies.long.edit({...})`
+- `patientFile.therapies.long.delete({therapyId})`
+- `patientFile.therapies.short.edit({...})` — short-term therapieplan uses a different shape (no `.add` / `.delete`; whole-blob edit)
+
+**Mongo collection:** `longTherapy` (separate from `patientFiles`). Subscribed when on `/patients/<id>?tabIndex=4`.
+
 ## Common interaction pitfalls
 
 - **Patient autocomplete typing intercepted by global search** — when an open modal has a `react-select` for Patiënt, do NOT type into it; the header search bar captures the keystrokes and navigates the page (dismissing the modal). Work around by clicking options with mouse or by setting the underlying React state programmatically.
