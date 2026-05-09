@@ -442,6 +442,31 @@ Probed via `Meteor.call('patientFile.add', {SSN: <bad value>})`. Documented as a
 
 For automation: don't rely on Halingo's INSZ validation as a safety net — generate INSZ values that pass mod-97 yourself before injecting.
 
+## Monetary values are stored as integer CENTS
+
+All Halingo invoice/event amounts are integers in cents — `amount: 3837` = €38.37, `pricePatient: 550` = €5.50. Confirmed for `invoices.amount`, `events.price`, `events.pricePatient`, `administrationCost`. When calling DDP methods that take amounts, pass cents.
+
+## User profile schema (Meteor.user().profile)
+
+Fields exposed by `Meteor.user().profile`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `locale` | `'nl' / 'fr'` | UI language |
+| `profession` | `'SPEECH_THERAPIST'` | Enum |
+| `isDeconventioned` | boolean | **Multi-conventionneerd toggle** — per-user, not per-practice. Toggle in `/user/profile`. |
+| `firstName`, `lastName` | string | Therapist name on invoices |
+| `phoneNumber`, `gsmNumber` | string | Contact |
+| `address` | `{street, postalCode, city, location}` | Practice address shown on invoices |
+| `riziv` | string (8 digits) | NIHII / RIZIV nummer |
+| `bankAccount` | string (IBAN, no spaces) | E.g. `BE68539007547034` — note no spaces |
+| `companyNumber` | string | BTW / Ondernemingsnummer |
+| `professionOther` | string | Free text for non-default profession |
+
+## Regulatory check methods
+
+- `events.canBePaidBack({eventId})` — returns boolean. Evaluates whether RIZIV would reimburse this event (date inside a bilan window, treatment cap not exceeded, patient eligible). **Informational only — Halingo does NOT use it as a hard gate** at invoice generation. Useful for compliance-dashboard automation.
+
 ## Common interaction pitfalls
 
 - **Patient autocomplete typing intercepted by global search** — when an open modal has a `react-select` for Patiënt, do NOT type into it; the header search bar captures the keystrokes and navigates the page (dismissing the modal). Work around by clicking options with mouse or by setting the underlying React state programmatically.
