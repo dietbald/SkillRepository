@@ -315,6 +315,16 @@ If this fails with `Cannot find module`, install it **locally** (not globally �
 npm install puppeteer-core
 ```
 
+**Running the prebuilt skill helpers (`inspect.js`, `eval.js`, `screenshot.js`) from a project directory.** The skill files live at `~/.claude/skills/BrowserControl/` (often a symlink to `C:\Repos\SkillRepository\skills\BrowserControl\`), and Node's resolver looks for `puppeteer-core` from the *script's* directory upward — NOT the cwd you ran it from. So even with `puppeteer-core` installed in your project, the helpers fail with `Cannot find module 'puppeteer-core'`. Pass `NODE_PATH` to point the resolver at your project's `node_modules`:
+
+```bash
+NODE_PATH="$PWD/node_modules" node ~/.claude/skills/BrowserControl/inspect.js
+NODE_PATH="$PWD/node_modules" node ~/.claude/skills/BrowserControl/eval.js "document.title"
+NODE_PATH="$PWD/node_modules" node ~/.claude/skills/BrowserControl/screenshot.js out.png
+```
+
+On Windows-bash, use the absolute project path: `NODE_PATH="C:/Users/you/Documents/myproject/node_modules" node ~/.claude/...`. Don't try to `npm install` puppeteer-core inside the SkillRepository — keep that directory clean and use NODE_PATH from the consumer project.
+
 ### 3d — Connect via Puppeteer
 
 ```javascript
@@ -509,6 +519,36 @@ const el = matches.sort((a, b) => a.getBoundingClientRect().height - b.getBoundi
 ```
 
 This is the difference between clicking the inbox row you wanted and clicking whichever row is at y=450.
+
+### Normalize whitespace before text-matching — UI text often contains NBSP (`\xa0`)
+
+Many enterprise portals (Apache Wicket, JSF, classic ASP.NET, government sites) render menu items, button labels, and table cells with a non-breaking space (`U+00A0`) between words instead of a regular space (`U+0020`). Visually identical, but `'Transaction History' === 'Transaction\xa0History'` is false, so any exact-string match silently returns nothing.
+
+Symptom: `document.body.innerText` clearly shows the label (so you *know* it's there), yet `[...document.querySelectorAll('a')].find(a => a.textContent.trim() === 'Transaction History')` returns `undefined`. The first time you see this is panic-inducing — the screenshot confirms the menu, but Puppeteer says it doesn't exist.
+
+**Always normalize whitespace before equality checks:**
+
+```javascript
+// ❌ Wrong — fails on NBSP-separated labels
+const a = [...document.querySelectorAll('a')]
+  .find(a => (a.textContent || '').trim() === 'Transaction History');   // null
+
+// ✅ Correct — collapse all whitespace runs to a single space, then trim
+const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+const a = [...document.querySelectorAll('a')]
+  .find(a => norm(a.textContent) === 'Transaction History');
+```
+
+`/\s+/` matches NBSP, regular space, tab, and newline — one rule covers them all. Use this in every text-search helper (button finder, link finder, label-to-coords resolver) by default — the cost is zero and it eliminates a whole class of "where did the element go" bugs.
+
+When debugging a "the text is clearly there but I can't match it" mystery, hex-dump the string FIRST before checking iframes, shadow DOM, or frames:
+```javascript
+const slice = txt.slice(txt.indexOf('Target'), txt.indexOf('Target') + 30);
+console.log([...slice].map(c => c.charCodeAt(0).toString(16)));
+// `a0` between words = NBSP. `2009`/`200a` = thin space. `200b` = zero-width space.
+```
+
+Verified on BDO Business Online Banking (Wicket portal — every menu item).
 
 ### Scraping PDF/link lists — scope to content area, not the full page
 
@@ -1473,6 +1513,32 @@ node /tmp/click.js
 ```
 
 This applies to any bash heredoc or `-e` argument containing `#id`, `#selector`, or `#comment-text`. Single-quoted heredocs (`<< 'EOF'`) are the safe container — bash does not interpret `#` inside them.
+
+### Default to writing `.js` files for any non-trivial inline query
+
+`node -e "..."` and `node -e '...'` work for one-line lookups (`document.title`), but break in subtle ways for anything with regex anchors, template literals, multi-line evaluators, or JSON output. Common bash-quoting hazards:
+
+- `#` → silent comment truncation (covered above)
+- `\$` → bash treats as escaped `$`, mangles arrow-function destructuring and template literals
+- `^...$` → backslashes inside double-quoted strings get one round of unescaping you didn't expect
+- Single quotes inside single-quoted strings → impossible without breaking out of the quote
+
+If the script is more than ~80 chars or contains any of `\\`, `\$`, `^`, `$`, or nested quotes, write it to a `.js` file with the Write tool and run `node script.js`. The file is also reusable for the next iteration — re-running a working script costs nothing, while re-typing a fragile inline query risks introducing a new escape bug.
+
+### Wicket-style portals — session tokens expire fast, don't burn them on debug iterations
+
+Apache Wicket portals (BDO BOB, BPI BizLink) embed one-time session tokens in URLs (`?x=lQwiCYuehJYx4hj-...`). The session itself also has an idle timeout — typically 5–10 minutes of inactivity. Each Puppeteer `connect()` + `evaluate()` call doesn't refresh the activity clock, because Wicket counts activity at the *server* (real form posts and link clicks), not browser-side mouse moves.
+
+This means: spending 10 minutes running 20 redundant `inspect.js` / `eval.js` queries while debugging a selector mismatch will silently log the user out, and the next click navigates to the login page. The user has to re-enter password + OTP — a major cost for a session that requires a phone-based 2FA.
+
+**Apply these rules from the first dashboard load on any Wicket portal:**
+
+1. Run **one** `inspect.js` to capture every menu item's `text + href`. Save the dump to a file.
+2. Use `page.goto(href)` for every navigation — never `mouse.click` the menu (items render off-screen at `x ≈ -10000` anyway, see the side-nav rule above).
+3. If a selector match returns null, **don't run more inspections** — first hex-dump the body text near the expected label (NBSP is the usual culprit, see the whitespace-normalization rule).
+4. Get a working flow on the first session, then re-run if needed. Don't iterate inside one session.
+
+Confirmed cost on BDO BOB: ~12 min of selector debugging consumed the OTP-protected session. The recovery cost is a fresh login including a new SMS OTP, which the user can't always provide on demand.
 
 ### Running a long Node script in a visible Windows terminal
 
