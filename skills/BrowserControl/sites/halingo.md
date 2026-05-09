@@ -351,6 +351,28 @@ await page.mouse.click(opt.x, opt.y);
 
 **Implication:** Halingo treats invoice status as a 6-state flag, not as a ledger of payment events. Practices needing payment-event auditing (date, amount, method per partial-payment) must use external accounting.
 
+## Document upload (DOCUMENTEN tab)
+
+`/patients/<patientId>?tabIndex=3` exposes a green circular "+" button (~(1353, 368) at 1920×1080) that triggers a hidden `<input type=file multiple>` with NO MIME filter (`accept=""`).
+
+```javascript
+// 1. Navigate to DOCUMENTEN tab and wait for load
+await page.goto(`https://dev.app.halingo.be/patients/${patientId}?tabIndex=3`, { waitUntil: 'domcontentloaded' });
+await sleep(7000);
+
+// 2. Find the hidden file input and upload
+const handles = await page.$$('input[type=file]');
+await handles[0].uploadFile('/path/to/file.pdf');
+await sleep(5000);  // Halingo POSTs, then auto-navigates
+
+// 3. After upload, page.url() will be `/patients/<patientId>/treatments/documents/<documentId>`
+//    Capture documentId from the URL.
+```
+
+**Caveat — malformed files:** The upload always succeeds (DB record created), but the document **detail view** renders a generic "Oeps, er is iets misgelopen" error page if the file body can't be parsed (e.g. malformed PDF). To verify the upload, navigate back to the list — the file IS there with a "N bestand" counter increment.
+
+**URL pattern:** `/patients/<patientId>/treatments/documents/<documentId>` — note the `treatments/` segment even when no treatment was explicitly targeted. The upload is associated with a default treatment context.
+
 ## Common interaction pitfalls
 
 - **Patient autocomplete typing intercepted by global search** — when an open modal has a `react-select` for Patiënt, do NOT type into it; the header search bar captures the keystrokes and navigates the page (dismissing the modal). Work around by clicking options with mouse or by setting the underlying React state programmatically.
