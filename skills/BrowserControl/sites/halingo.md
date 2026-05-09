@@ -174,6 +174,46 @@ The Stripe Card Element lives in iframe with `name^="__privateStripeFrame"` — 
 | `invoices.search` | Search/filter invoices on /financial. |
 | `invoices.statistics.earnings` | Drive the Inkomsten/Ontvangen monthly chart. |
 
+## URL map (verified)
+
+| Path | Purpose |
+|---|---|
+| `/` | Dashboard (after login) |
+| `/login` | Login |
+| `/register` | Signup |
+| `/forgot` | Password reset |
+| `/ToC` | Terms of service |
+| `/logout` | Server-side logout |
+| `/agenda` | Calendar week view |
+| `/patients` | Patient list (filter via `?fullName=...`) |
+| `/patients/:id` | Patient detail (tabs via `?tabIndex=N`) |
+| `/financial` | Financial overview (4 tabs: FACTUREN/VERZAMELSTAATFACTUREN/COMMISSIE/OVERZICHT SESSIES) |
+| `/riziv` | RIZIV R-Waarde tracker |
+| `/rosa` | Rosa integration page |
+| `/practices` | Practice info card with LEDEN/ABONNEMENT/INSTELLINGEN tiles |
+| `/practices/users` | Practice members (LEDEN page) |
+| `/practices/subscription` | Subscription/billing |
+| `/practices/subscription/payment/change` | Change payment method (Stripe Card Element) |
+| `/practices/settings` | Practice settings (Facturatie types, invoice templates) |
+| `/practices/new` | Practice creation 3-step wizard |
+| `/user/profile` | User profile + personal billing identity (REQUIRED for invoicing) |
+
+## Three-gate invoice validation (regulatory)
+
+Invoice generation (`/financial` → "+" → select sessions → FACTUREER) enforces **three progressive checks**:
+
+1. **Therapist (user) billing identity** — `invoices.create.incompleteUser`. Set at `/user/profile`. Required: voornaam, achternaam, adres, RIZIV nummer, rekeningnummer, ondernemingsnummer.
+2. **Patient file billing data** — `invoices.create.incompletePatientFile`. Set on patient INFO tab. Required: voornaam, achternaam, full adres (incl. Plaats), aanspreking. Ziekenfonds only for derde-betaler invoices.
+3. **Bilan-coverage warning at event-creation time** — Halingo warns (but doesn't block) if no bilan covers the appointment date.
+
+Invoice number format: `<3-letter-uppercase-patient-surname-prefix>-<YYYYMMDD>-<3-digit-seq>`. E.g., `PEE-20260509-001` for Peeters.
+
+Auto-pricing (verified): a 30-min cabinet session for §2b.2 (taalontwikkeling) bills at €38.37 via RIZIV nomenclature 713311 — Halingo's De Conventie 2026 tariff is current.
+
+## Aanspreking dropdown options (NL)
+
+`Meneer`, `Mevrouw`, `Mejuffrouw`, `Ouders van` (Belgian paediatric-specific), `dr.`, `Prof`, `ir.`
+
 Plus collection subscriptions: `users.profileData`, `practices`, `practice`, `practicechat`, `pending_invoices`, `practiceInvoices`, `notifications.new`, `kadira_settings`, `AnalyticsUsers`, `plans`, `subscriptions`, `practiceUsers`, `referrals`, `treatments`, `bilans`, `reportsOfTreatment`, `documentsOfTreatment`.
 
 ## RIZIV pathology types — Halingo's Type dropdown
