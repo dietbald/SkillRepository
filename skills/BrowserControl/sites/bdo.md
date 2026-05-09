@@ -130,6 +130,78 @@ Function code: `FC9210`. Single page, no form to fill. Renders a summary table o
 
 PDF is the live-balance stop-anchor for reconciliation.
 
+## Inquiry pages — multi-year archives (CRITICAL — bypasses the 90-day TxnHist cap)
+
+Every action menu item has TWO tabs: a "Create" tab (submit a new transaction) and an **Inquiry** tab (search past ones). The Inquiry archives accept date ranges of **at least 5 years**, providing the historical depth that Transaction History (FC9220) lacks.
+
+| Function | Menu label | Inquiry tab label | Verified |
+|---|---|---|---|
+| FC9230 | Fund Transfer - Own | "Fund Transfer Inquiry" | ✓ accepts 5y |
+| FC9240 | Fund Transfer - Other Party | "Fund Transfer Inquiry" | ✓ accepts 5y, BICC has data 2024-05+ |
+| FC9260 | Wire Transfer | "Wire Transfer Inquiry" | ✓ form works, BICC no data |
+| FC9339 | Outward Payment | "Outward Payment Inquiry" | ✓ accepts 5y, BICC has data 2024-06+ — main disbursement archive |
+| FC9331 | Bills Payment | "Bills Payment Inquiry" | ✓ form works, BICC no data |
+
+For BICC reconciliation, **Outward Payment Inquiry (FC9339)** is the gold mine — it lists every PESONET / InstaPay / RTGS payment to vendors and employees with reference numbers (`OPR-MMDDYYYY-...`), payee name+account, amount, and execution date.
+
+### Inquiry form access pattern
+
+Each inquiry page requires three setup steps before the search form is usable:
+
+```javascript
+// 1. Click the "* Inquiry" tab (sibling to "Create *" tab)
+await page.evaluate(() => {
+  const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+  [...document.querySelectorAll('a')]
+    .find(a => norm(a.textContent) === 'Outward Payment Inquiry')?.click();
+});
+await sleep(2200);
+
+// 2. Expand the Search Options panel — it's wrapped in a hidden WidgetBody2
+//    The toggle is a span with slidedownbutton="true" — call .click() in-page,
+//    NOT mouse.click on coords (jQuery handler doesn't fire on coord clicks).
+await page.evaluate(() => {
+  const btn = document.querySelector('[slidedownbutton="true"]');
+  if (btn && getComputedStyle(btn).display !== 'none') btn.click();
+});
+await sleep(2000);
+
+// 3. Now all selects/inputs in the form are visible (offsetParent !== null).
+```
+
+### Required fields
+
+`createDtFrom` and `createDtTo` are **required** on every Inquiry form. Empty values return `* This field is required` errors. Always set both, even if you only care about transaction date — use a wide window (e.g. `01/01/2020` → today).
+
+```javascript
+for (const [name, val] of [['createDtFrom','01/01/2020'], ['createDtTo','05/09/2026']]) {
+  const id = await page.evaluate((n) =>
+    [...document.querySelectorAll('input')].find(i => i.name === n && i.offsetParent !== null)?.id,
+  name);
+  await page.click('#'+id, { clickCount: 3 });
+  await page.type('#'+id, val, { delay: 25 });
+}
+```
+
+Optional secondary filters: `txnDateWmc:fromDt`/`txnDateWmc:toDt` (transaction date), `account` (Transfer from), `destWmc:destAccount` (Transfer to), `currCd` (PHP/USD/etc), `statusWmc:status` (Successful/Pending/etc), `wfStatusWmc:wfStatus` (workflow status).
+
+### Submit button — match by `name="search"`
+
+Inquiry pages have BOTH a Create form and an Inquiry form on the same page. The Inquiry submit is uniquely `<input type="submit" name="search" value="Search">` — do NOT pick by index, use the name:
+
+```javascript
+const sb = [...document.querySelectorAll('input[type="submit"][name="search"]')]
+  .find(s => s.offsetParent !== null);
+```
+
+### Export downloads on Inquiry pages
+
+Same pattern as Transaction History — three Export buttons (PDF, XLS, CSV) appear under the result table. ALL THREE use `onclick="window.location.href='?x=...'"` on Inquiry pages (CSV is `wicketAjaxGet` only on the Account Portfolio + TxnHist pages, not here). Extract the URL with the regex `window\.location\.href\s*=\s*'(\?x=[^']+)'` and `page.evaluate(fetch())`.
+
+Filename patterns:
+- FC9240: `Fund_Transfer_Header_FO_Report.{pdf,xls}`, `Fund_Transfer_Header_FO_Report_Csv.csv`
+- FC9339: `Outward_Remittance_Header_FO_Report.{pdf,xls}`, `Outward_Remittance_Header_FO_Report_Csv.csv`
+
 ## Roles & module visibility
 
 Maker role (TJMAKER on this corporation) sees:

@@ -937,6 +937,56 @@ Why this works: hidden ≠ unrendered. The `<a>` elements are fully present with
 
 For Wicket portals specifically, the menu hrefs follow `?<n>-1.ILinkListener-menuPanel-zeroLevelMenu-<group>-recursiveMenu-rows-<row>-row-menuLink` where `<n>` is a per-session id — capture them per-session, don't hardcode `<n>`.
 
+### Banking/enterprise portals — check Inquiry tabs, NOT just the headline History page
+
+A bank or ERP that says "Transaction History only goes back 90 days" is almost certainly limiting the *Account Services* view, not the underlying ledger. Look for per-action **Inquiry** tabs on each function page (Fund Transfer Inquiry, Outward Payment Inquiry, Bills Payment Inquiry, Wire Transfer Inquiry, etc.). These archives commonly hold **2–5+ years** of records — orders of magnitude more than the headline History page.
+
+**Pattern**: every action menu item (Fund Transfer, Bills Payment, …) has TWO tabs: "Create" (submit a new transaction) and "Inquiry" (search past ones). The Inquiry forms have their own date range, status, amount, reference filters — and accept much wider date ranges than the bank's primary History.
+
+When the user asks for "all the data" or "more than X months back" and the History page caps it: walk every action menu, click the Inquiry tab, expand the Search Options panel, set createDt range to 5+ years, and download. Only the action types the customer actually used will return rows — but those rows reach back to whenever they enrolled in the feature.
+
+Verified on BDO Business Online Banking (Wicket): Account Services Transaction History caps at 90 days, while Outward Payment Inquiry and Fund Transfer Inquiry both accept a full 5-year range.
+
+### Hidden search panels collapsed via JS — `[slidedownbutton="true"]` and similar toggles
+
+Wicket / older Bootstrap admin portals render full search forms inside a `<div class="WidgetBody2" widgetshow="false" style="display:none">` until the user clicks an arrow icon to expand the panel. Inside, the toggle is a `<span slidedownbutton="true">` (down-arrow, visible when collapsed) and a sibling `<span slideupbutton="true">` (up-arrow, hidden when collapsed). The expand handler is bound via jQuery, NOT a coord click — `page.mouse.click(x,y)` on the arrow does nothing.
+
+```javascript
+// ✅ Correct — call .click() in-page, which fires the jQuery handler
+await page.evaluate(() => {
+  const btn = document.querySelector('[slidedownbutton="true"]');
+  if (btn && getComputedStyle(btn).display !== 'none') btn.click();
+});
+await new Promise(r => setTimeout(r, 2000));
+```
+
+If `.click()` doesn't expand it (rare — usually means the handler was already torn down), force-show as a fallback:
+```javascript
+await page.evaluate(() => {
+  const body = document.querySelector('[widgetname="financialSearchPanel"]');
+  if (body) { body.style.display = 'block'; body.setAttribute('widgetshow', 'true'); }
+});
+```
+
+After expansion, all the search inputs and selects appear with `offsetParent !== null`. Symptom you missed it: `inspect.js` reports many hidden selects with names but the page text mentions "Search Options" — the panel is collapsed, expand it before probing fields.
+
+### Inquiry forms with a "Create" form on the same page — disambiguate the submit
+
+Pages with both a transaction-submission form and a search/inquiry form expose multiple `input[type="submit"]` elements. Picking the first or last by index is fragile — they swap order across UI revisions.
+
+**Use the submit button's `name` attribute to disambiguate.** The inquiry form's submit is typically `name="search"` while the create-transaction submit is `name=":submit"` or just unset.
+
+```javascript
+// ✅ Match by name — robust across page redesigns
+const btn = await page.evaluate(() => {
+  const sb = [...document.querySelectorAll('input[type="submit"][name="search"]')]
+    .find(s => s.offsetParent !== null);
+  if (!sb) return null;
+  const r = sb.getBoundingClientRect();
+  return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) };
+});
+```
+
 ### Stale element references — "Node is either not clickable or not an Element"
 
 This Puppeteer error means an `ElementHandle` was stored before a navigation, then used after — the node no longer exists in the new page's DOM.
