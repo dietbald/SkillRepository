@@ -389,6 +389,34 @@ await sleep(5000);  // Halingo POSTs, then auto-navigates
 4. Invoice is not cancelled
 5. A therapist is selected at the top-left filter
 
+## DDP method catalog discovery
+
+To dump every registered Meteor method available to the current user, run in the page:
+
+```javascript
+Object.keys(Meteor.connection._methodHandlers).sort()
+```
+
+24 invoice-related methods exposed (full list in `halingo_uat_2026-05-08/_missing_docs.md`). Notable ones:
+
+| Method | Params | Notes |
+|---|---|---|
+| `invoices.edit.state` | `{invoiceId, state}` | State enum: `open` / `unpaid` / `paid` / `mailed` / `printed` (lowercase English; gedeeltelijk variant TBD) |
+| `invoices.edit.administrationCost` | `{invoiceId, administrationCost: <EUR>}` | Set admin fee on invoice |
+| `invoices.edit.structuredAnnouncement` | `{invoiceId, ...}` | Edit mededeling |
+| `invoices.cancel` | `{invoiceId}` | Cancel invoice |
+| `invoices.add.patient` | `{...}` | Single patient invoice |
+| `invoices.add.all.therapists` | `{practiceId, eventIds[]}` | Bulk from events |
+| `invoices.mail` | `{invoiceId}` | Email; needs mail-template |
+| `invoices.print` / `invoices.prints` | `{...}` | Print |
+| `invoices.certificates.generate/print` | `{...}` | Certificate flow (verzamelstaat prerequisite) |
+| `invoices.insurance.*` | various | Mutuality batch flows |
+| `invoices.commission.search` | `{...}` | Commission listing |
+
+**State enum mapping:** UI labels are Dutch but DB values are lowercase English — `Openstaand=open`, `Betaald=paid`, `Geprint=printed`, `Gemaild=mailed`, `Onbetaald=unpaid`. Use the English values when calling `invoices.edit.state` directly.
+
+**Bypass for state-machine UI restrictions:** The dropdown UI restricts BETAALD invoices to {Gemaild, Betaald}, but `Meteor.call('invoices.edit.state', {invoiceId, state: 'open'})` succeeds regardless — automation can revert state freely. The UI restriction is client-side only.
+
 ## Common interaction pitfalls
 
 - **Patient autocomplete typing intercepted by global search** — when an open modal has a `react-select` for Patiënt, do NOT type into it; the header search bar captures the keystrokes and navigates the page (dismissing the modal). Work around by clicking options with mouse or by setting the underlying React state programmatically.
