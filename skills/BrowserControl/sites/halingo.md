@@ -166,6 +166,13 @@ The Stripe Card Element lives in iframe with `name^="__privateStripeFrame"` — 
 | `treatments.add` | Create a treatment for a patient. Params: `{hasInitialBilan, name, type, patientFileId}`. Returns `treatmentId`. Auto-creates `bilans[0]` with `type: "initial"`. |
 | `treatment.can.be.removed` | Pre-flight check before allowing treatment delete. |
 | `treatments.updateHalingoSessionCount` | Recompute session counter for a treatment. |
+| `events.create` | Create an appointment. Params: `{title, patientFileId, treatmentId, userId, start, end, type, meta:{type, subType, location}}`. Returns eventId. Auto-creates a commission invoice (event document gets `commissionInvoiceId` populated). |
+| `patientFiles.view` | Fetch patient details for the agenda autocomplete. |
+| `patientFiles.get` | Fetch full patient docs by id list. |
+| `events.get.uninvoiced` | List unbilled events for a user/practice — drives the invoice creation modal. |
+| `invoices.add.all.therapists` | Generate patient invoices for selected events. Params: `{practiceId, eventIds[]}`. **Fails with `invoices.create.incompleteUser`** if user-level billing identity (name, address, IBAN, BTW, RIZIV) is missing — this data is per-user, NOT per-practice. |
+| `invoices.search` | Search/filter invoices on /financial. |
+| `invoices.statistics.earnings` | Drive the Inkomsten/Ontvangen monthly chart. |
 
 Plus collection subscriptions: `users.profileData`, `practices`, `practice`, `practicechat`, `pending_invoices`, `practiceInvoices`, `notifications.new`, `kadira_settings`, `AnalyticsUsers`, `plans`, `subscriptions`, `practiceUsers`, `referrals`, `treatments`, `bilans`, `reportsOfTreatment`, `documentsOfTreatment`.
 
