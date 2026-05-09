@@ -163,8 +163,45 @@ The Stripe Card Element lives in iframe with `name^="__privateStripeFrame"` — 
 | `login` | Authenticate user (followed by `users.register` for auto-login on signup) |
 | `practice.add` | Create a new practice — payload includes `info.{contact, name, address, companyNumber, bankAccount, info}` |
 | `practice.subscriptions.payment.change` | Change payment method on a subscription. Params: `{subscriptionId, method, sourceId}`. Currently silently failing. |
+| `treatments.add` | Create a treatment for a patient. Params: `{hasInitialBilan, name, type, patientFileId}`. Returns `treatmentId`. Auto-creates `bilans[0]` with `type: "initial"`. |
+| `treatment.can.be.removed` | Pre-flight check before allowing treatment delete. |
+| `treatments.updateHalingoSessionCount` | Recompute session counter for a treatment. |
 
-Plus collection subscriptions: `users.profileData`, `practices`, `practice`, `practicechat`, `pending_invoices`, `practiceInvoices`, `notifications.new`, `kadira_settings`, `AnalyticsUsers`, `plans`, `subscriptions`, `practiceUsers`, `referrals`.
+Plus collection subscriptions: `users.profileData`, `practices`, `practice`, `practicechat`, `pending_invoices`, `practiceInvoices`, `notifications.new`, `kadira_settings`, `AnalyticsUsers`, `plans`, `subscriptions`, `practiceUsers`, `referrals`, `treatments`, `bilans`, `reportsOfTreatment`, `documentsOfTreatment`.
+
+## RIZIV pathology types — Halingo's Type dropdown
+
+When creating a Terugbetaling (treatment), the Type dropdown lists 18 categories (matching Belgian Article 36 Logopedie):
+
+| Code | Pathology |
+|---|---|
+| `a` | Mondelinge taal/spraakstoornissen (occupational) |
+| `b.1` | Afasie |
+| `b.2` | Stoornissen receptieve/expressieve taalontwikkeling (190-session cap, age 18 cutoff) |
+| `b.3` | Dyslexie/dysorthografie/dyscalculie |
+| `b.4` | Gespleten lippen |
+| `b.5` | Verworven stoornissen na radiotherapie/chirurgie |
+| `b.6.1` | Dysglossieën |
+| `b.6.2` | Dysartrieën |
+| `b.6.3` | Chronische spraakstoornissen (infinite renewal) |
+| `b.6.4` | Stotteren |
+| `b.6.5` | Functionele stoornissen relatie ortho |
+| `c.1` | Sequelen van laryngectomie |
+| `c.2` | Dysfunctie larynx/stemplooien |
+| `d` | Gehoorstoornissen |
+| `e` | Dysfagie |
+| `f` | Dysfasie (Neuropediatrician-only prescription) |
+| `g` | Locked-In Syndroom |
+| `Aanvullende verzekering` | Supplementary insurance category |
+
+Halingo correctly enforces the 190-session cap for §2b.2 (verified by inspection of the treatment view).
+
+## Common interaction pitfalls
+
+- **Patient autocomplete typing intercepted by global search** — when an open modal has a `react-select` for Patiënt, do NOT type into it; the header search bar captures the keystrokes and navigates the page (dismissing the modal). Work around by clicking options with mouse or by setting the underlying React state programmatically.
+- **Modals close on outside click** — clicking elsewhere (including the global search bar) dismisses any open modal.
+- **iCheck checkbox state may persist** — toggling WACHTLIJST in one patient-create modal MAY carry over to subsequent modals (suspect, to verify). Always explicitly toggle to desired state.
+- **List view UI lag** — patient list shows "Geen terugbetaling" badge even after a treatment is created; reload to refresh.
 
 ## Status by phase
 
@@ -172,8 +209,8 @@ Plus collection subscriptions: `users.profileData`, `practices`, `practice`, `pr
 - ✅ Phase B1 — Liam (Nele Van den Broeck) signed up, userId `nrBKA6xYo9jCL8SjY`
 - ✅ Phase B2 — Marcus (Sophie Dubois) signed up via direct /register, userId `XdJvrzr9pFF93GDBd`, FR locale
 - ✅ Phase C — Practice "Praktijk Van den Broeck" created on free trial, practiceId `rkdDPLXHh54cnLYD3`
-- 🚧 Phase D — Per-area tour started (identity ✅, practice-mgmt partial, patient-mgmt 1/8 patients created), continuing
-- ⏳ Phase E — Belgian regulatory probes (overlapping with D)
+- 🚧 Phase D — Identity ✅, practice-mgmt mostly ✅, patient-mgmt: **5/5 patients created** (Lien, Mathias, Emma, Lucas, Margaux), treatment-creation ✅ (1 treatment for Lien with §2b.2, 190 cap), agenda modal documented (event creation deferred). Subscription: card token saved but UI defect.
+- 🚧 Phase E — pathology dropdown captured (interleaved with D); §2b.2 session cap verified; Evolutiebilan defect surfaced
 - ⏳ Phase F — reporting + commit
 
 Working directory for outputs: `C:/Repos/halingo_uat_2026-05-08/`
