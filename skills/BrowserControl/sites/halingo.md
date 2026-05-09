@@ -309,6 +309,48 @@ When creating a Terugbetaling (treatment), the Type dropdown lists 18 categories
 
 Halingo correctly enforces the 190-session cap for §2b.2 (verified by inspection of the treatment view).
 
+## Invoice payment-recording (mark as paid)
+
+The "mark as paid" UI is **row-level only** on `/financial` → FACTUREN tab — NOT exposed on the invoice detail page nor in the kebab menu.
+
+**Mechanism:** Each invoice row shows a clickable status badge (e.g. "OPENSTAAND") at the right side of the row. Clicking it opens an inline dropdown with **6 status values**:
+
+| Status | Meaning |
+|---|---|
+| `Openstaand` | Default after creation; outstanding |
+| `Onbetaald` | Explicitly unpaid (post-due distinction TBD) |
+| `Gedeeltelijk betaald` | Partial payment received |
+| `Geprint` | Printed (auto-set after Print action?) |
+| `Gemaild` | Emailed (auto-set after Verstuur via mail?) |
+| `Betaald` | Paid in full |
+
+Selecting any value flips the invoice status immediately — **no confirmation modal, no payment-amount or payment-date prompt**. The dashboard counters at the top of `/financial` (`Inkomsten`, `Ontvangen`, `Openstaand`) update in real-time.
+
+```javascript
+// 1. Click the row's status badge (find it by current text + offsetParent)
+const badge = await page.evaluate(() => {
+  const b = [...document.querySelectorAll('button')]
+    .find(b => b.offsetParent && /^(OPENSTAAND|ONBETAALD|GEPRINT|GEMAILD|BETAALD)$/i.test((b.innerText||'').trim()));
+  if (!b) return null;
+  const r = b.getBoundingClientRect();
+  return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
+});
+await page.mouse.click(badge.x, badge.y);
+await new Promise(r => setTimeout(r, 1500));
+
+// 2. Click target option in dropdown — use mouse coords (DOM .click() may match wrong element)
+const opt = await page.evaluate(() => {
+  const li = [...document.querySelectorAll('li')]
+    .find(e => e.offsetParent && (e.innerText||'').trim() === 'Betaald');
+  if (!li) return null;
+  const r = li.getBoundingClientRect();
+  return { x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2) };
+});
+await page.mouse.click(opt.x, opt.y);
+```
+
+**Implication:** Halingo treats invoice status as a 6-state flag, not as a ledger of payment events. Practices needing payment-event auditing (date, amount, method per partial-payment) must use external accounting.
+
 ## Common interaction pitfalls
 
 - **Patient autocomplete typing intercepted by global search** — when an open modal has a `react-select` for Patiënt, do NOT type into it; the header search bar captures the keystrokes and navigates the page (dismissing the modal). Work around by clicking options with mouse or by setting the underlying React state programmatically.
