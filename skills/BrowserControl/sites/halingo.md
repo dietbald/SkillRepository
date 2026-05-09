@@ -373,6 +373,22 @@ await sleep(5000);  // Halingo POSTs, then auto-navigates
 
 **URL pattern:** `/patients/<patientId>/treatments/documents/<documentId>` — note the `treatments/` segment even when no treatment was explicitly targeted. The upload is associated with a default treatment context.
 
+## /financial 4-tab structure
+
+| Tab | URL state | Purpose |
+|---|---|---|
+| FACTUREN | default | Patient invoice list with row-level inline status badge dropdown |
+| VERZAMELSTAATFACTUREN | tab click | Mutuality batch invoices — GENEREER opens a 2-mode picker (Per ziekenfonds / Per patiënt) |
+| COMMISSIE | tab click | Sub-contractor commission invoices (monthly aggregate) — GENEREER on empty practice shows "De commissies zijn al volledig up-to-date" |
+| OVERZICHT SESSIES | tab click | Session-type analytics donut + table; month/year filter |
+
+**Verzamelstaat eligibility (5 conditions surfaced by Halingo info-tooltip):**
+1. Uninvoiced certificate exists (must be printed or saved first)
+2. Mutuality name is NOT literally "ziekenfonds" (placeholder rejection)
+3. Mutuality has not yet paid
+4. Invoice is not cancelled
+5. A therapist is selected at the top-left filter
+
 ## Common interaction pitfalls
 
 - **Patient autocomplete typing intercepted by global search** — when an open modal has a `react-select` for Patiënt, do NOT type into it; the header search bar captures the keystrokes and navigates the page (dismissing the modal). Work around by clicking options with mouse or by setting the underlying React state programmatically.
