@@ -402,7 +402,7 @@ Object.keys(Meteor.connection._methodHandlers).sort()
 | Method | Params | Notes |
 |---|---|---|
 | `invoices.edit.state` | `{invoiceId, state}` | State enum: `open` / `unpaid` / `paid` / `mailed` / `printed` (lowercase English; gedeeltelijk variant TBD) |
-| `invoices.edit.administrationCost` | `{invoiceId, administrationCost: <EUR>}` | Set admin fee on invoice |
+| `invoices.edit.administrationCost` | `{invoiceId, administrationCost: <CENTS>}` | Set admin fee. **Unit is CENTS, not EUR** — pass `500` for €5.00 |
 | `invoices.edit.structuredAnnouncement` | `{invoiceId, ...}` | Edit mededeling |
 | `invoices.cancel` | `{invoiceId}` | Cancel invoice |
 | `invoices.add.patient` | `{...}` | Single patient invoice |
