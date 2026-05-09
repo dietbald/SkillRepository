@@ -174,6 +174,26 @@ The Stripe Card Element lives in iframe with `name^="__privateStripeFrame"` — 
 | `invoices.search` | Search/filter invoices on /financial. |
 | `invoices.statistics.earnings` | Drive the Inkomsten/Ontvangen monthly chart. |
 
+## Invoice identity model — TWO numbers per invoice
+
+Halingo issues each invoice with TWO identifiers (Belgian VAT compliance):
+
+| Identifier | Format | Purpose |
+|---|---|---|
+| **Factuurnummer** | sequential integer (1, 2, 3, ...) — gap-free, per practice | Legally-required Belgian invoice number; rendered as `FACTUURNUMMER 1` on the invoice top-right |
+| **Mededeling** | `<3-letter-uppercase-patient-surname-prefix>-<YYYYMMDD>-<3-digit-seq>` (e.g. `PEE-20260509-001`) | Freeform "vrije mededeling" / payment reference used on the bank transfer; rendered in the footer payment instruction |
+| **DB `_id`** | 17-char Meteor ID (e.g. `72xu7jwThSfHJAccx`) | Invoice URL: `/financial/invoices/patient/<id>` |
+
+Don't confuse them — auditors check the sequential `factuurnummer`; the patient sees the `mededeling` on their bank-transfer slip. Both are visible on the rendered invoice.
+
+## Invoice download is NOT Fetch-interceptable
+
+Clicking the download icon on `/financial/invoices/patient/<id>` (or in the kebab menu) does NOT trigger a Fetch-interceptable HTTP response — likely uses `window.print()` or a JS `blob:` URL or a click on a hidden `<a download>`. Three workaround options:
+
+1. **`page.pdf()`** — saves the visible page as PDF including UI chrome. Visually equivalent to the rendered invoice but includes sidebar/breadcrumbs.
+2. **Element screenshot** — `await page.$('.invoice-preview-selector').screenshot({ path: ... })` to clip just the right card.
+3. **Probe for a direct route** — `/financial/invoices/patient/<id>/pdf` or similar; not yet verified.
+
 ## URL map (verified)
 
 | Path | Purpose |
