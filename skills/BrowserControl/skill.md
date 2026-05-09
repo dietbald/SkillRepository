@@ -1531,6 +1531,92 @@ Puppeteer connects identically: `puppeteer.connect({ browserURL: 'http://127.0.0
 
 `TargetClosedError` (Playwright) / `Protocol error: Target closed` (Puppeteer) can fire mid-iteration on long runs — the CDP connection just drops. There's no clean recovery; design every script around `if fs.existsSync(fp) skip` so a re-run picks up where it left off rather than re-downloading everything.
 
+### Bail out on CDP "Session closed" — don't keep iterating
+
+When `Browser.setDownloadBehavior` or any CDP call returns `Protocol error: Session closed. Most likely the page has been closed.`, the underlying Chrome target is dead and **every subsequent ref will fail the same way**. Without a guard, the script burns through thousands of iterations marking each as ERROR. Detect once and exit so a restart can recover.
+
+```javascript
+try {
+  await client.send('Browser.setDownloadBehavior', { ... });
+} catch (e) {
+  if (/Session closed|Target closed/.test(e.message)) {
+    log('FATAL: CDP session lost — exiting so restart can rebuild Chrome connection');
+    process.exit(2);  // checkpoint preserved; resume will rebuild client + page
+  }
+  throw e;
+}
+```
+
+Why: Puppeteer doesn't auto-reconnect a dead `client` (CDP session) even though `browser` and `page` may still appear valid. Re-creating only the page from `browser.newPage()` won't re-establish the per-page CDP session your script holds. Cleanest is exit + restart.
+
+### Resume-able batch with per-ref checkpoint
+
+For long scrapes (hundreds–thousands of items), checkpoint per-ref so a crash/kill loses at most one item. Pattern:
+
+```javascript
+const CHECKPOINT = 'progress.json';
+let progress = { done: {}, started: new Date().toISOString() };
+if (fs.existsSync(CHECKPOINT)) progress = JSON.parse(fs.readFileSync(CHECKPOINT, 'utf8'));
+
+// Optional: pre-seed from a prior run's checkpoint to avoid re-doing
+const PRE_DONE = new Set();
+for (const cp of ['_priorRun_progress.json']) {
+  try {
+    const t = JSON.parse(fs.readFileSync(cp, 'utf8'));
+    for (const [r, v] of Object.entries(t.done || {})) {
+      if (v && !v.error) PRE_DONE.add(r);  // skip only if it succeeded
+    }
+  } catch {}
+}
+
+for (const t of targets) {
+  if (progress.done[t.ref] || PRE_DONE.has(t.ref)) continue;
+  try {
+    // ... do work, save manifest.json + downloaded files ...
+    progress.done[t.ref] = { count: ..., bidDocs: ..., multi: ... };
+  } catch (e) {
+    progress.done[t.ref] = { error: e.message.slice(0, 200) };  // mark, don't crash
+  }
+  fs.writeFileSync(CHECKPOINT, JSON.stringify(progress, null, 2));  // flush after every ref
+}
+```
+
+To retry only failed refs at the end, strip error entries:
+```javascript
+const p = JSON.parse(fs.readFileSync(CHECKPOINT, 'utf8'));
+for (const [r, v] of Object.entries(p.done)) if (v.error) delete p.done[r];
+fs.writeFileSync(CHECKPOINT, JSON.stringify(p, null, 2));
+// Re-run the script — they'll process again from clean state
+```
+
+### Batched downloads — fire all clicks, then wait at end
+
+When a page has N "click to download" links and each download takes 5-30+ seconds (e.g. PhilGEPS bid documents with multi-MB drawings), per-click polling for the file is fragile — large files often arrive after the per-click timeout, which falsely reports "no file" even though Chrome eventually saves them. Better: click all, then poll the directory for stable file count once at the end.
+
+```javascript
+const before = new Set(fs.readdirSync(downloadDir));
+for (const link of docLinks) {
+  await page.evaluate((id) => document.getElementById(id)?.click(), link.id);
+  await sleep(2500);  // brief — just enough to register the postback
+  // re-navigate to base page so next click works (postback may have cleared state)
+  await page.goto(basePageUrl, { waitUntil: 'domcontentloaded' });
+  await sleep(1500);
+}
+// Now wait for ALL downloads to settle: poll until file count stops changing
+let lastCount = -1, stable = 0;
+for (let i = 0; i < 60; i++) {
+  await sleep(5000);
+  const fresh = fs.readdirSync(downloadDir).filter(f => !before.has(f) && !f.endsWith('.crdownload'));
+  if (fresh.length === lastCount) stable++;
+  else { lastCount = fresh.length; stable = 0; }
+  if (stable >= 3 && fresh.length >= docLinks.length) break;
+  if (stable >= 6) break;  // give up after 30s of stability with fewer than expected
+}
+const captured = fs.readdirSync(downloadDir).filter(f => !before.has(f) && !f.endsWith('.crdownload'));
+```
+
+Why: `.crdownload` extension is Chrome's in-progress marker; the file is only fully written when renamed without that suffix. Stable-count detection tolerates downloads completing in any order while still bailing if PhilGEPS just doesn't return a file for some link.
+
 ### Auditing a plain-HTTPS scraper — use BrowserControl to find missing link patterns
 
 Before writing a scraper's `href` regex, use BrowserControl to extract every link on the page and identify all URL patterns in use. Sites frequently mix link types (direct PDFs, Google Drive, OneDrive, internal paths) across different sections or tabs — a regex that only matches one pattern silently misses the rest.

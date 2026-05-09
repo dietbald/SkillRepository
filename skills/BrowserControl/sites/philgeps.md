@@ -198,13 +198,50 @@ Inside a single PhilGEPS session you can place arbitrarily many orders without r
 
 When a bid is awarded, the Award Notice Abstract carries the high-level fields (awardee, contract amount, dates) and the **BAC Resolution PDFs** carry the full bid-opening abstract: every bidder who submitted, their bid amount, and any disqualifications with reasons.
 
-### Step 1 — Get the AwardID from the notice abstract
-On `BidNoticeAbstractUI.aspx?refID=N`, click the `Award Notice` link → lands on `ViewAwardNoticesListUI.aspx?refID=N`. The Title column has a link to:
+### Step 1 — Get ALL AwardIDs from the notice list (one ref can have many)
+
+On `BidNoticeAbstractUI.aspx?refID=N`, click the `Award Notice` link → lands on `ViewAwardNoticesListUI.aspx?refID=N`. The Title column has links of the form:
 ```
 /GEPS/R4/R3_AwardNotice_AwardAbstract.html?RefID=<ref>&LineItemID=1&OrgID=<org>&AwardID=<award>&DF=&uOrgId=
 ```
 
+**Iterate every AwardAbstract link, never just the first one.** Multi-package and "by lot" tenders publish one award notice per package/lot — clicking the first link only and stopping misses 2-9× the contract value. Examples seen in the wild: NIA Jalaur CW03-25 = 9 packages with 6 different awardees, DA Region VI SVPs = 7 catering lots, RUZZLE DEN Carabao Shed = 2 lots.
+
+```javascript
+// WRONG — captures only first award:
+const url = await page.evaluate(() => [...document.querySelectorAll('a')]
+  .find(a => (a.href||'').includes('AwardAbstract'))?.href);
+
+// RIGHT — captures every award:
+const awardLinks = await page.evaluate(() => [...document.querySelectorAll('a')]
+  .filter(a => a.offsetParent !== null && (a.href||'').includes('AwardAbstract'))
+  .map(a => a.href));
+for (const url of awardLinks) {
+  const awardID = (url.match(/AwardID=(\d+)/) || [])[1];
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  // ... extract award details + click View Documents + fetch FileIDs
+}
+```
+
 Empty award list (`No award notices found`) is **not** a reliable failure signal — bids may be in post-qualification with the award not yet posted. Wait or check iloilo.gov.ph (or equivalent procuring-entity portal) before declaring failure.
+
+### Multi-package / partial-scope detection signals
+
+When dive % (1 - contract/ABC) > 40%, it's almost always a multi-package tender where the captured contract is for one slice but the published ABC covers the whole tender. To avoid misleading discount stats, classify each high-dive bid using these signals — they're **deterministic from already-saved abstract.txt** so no extra browser work needed:
+
+| Signal | Pattern | Verdict |
+|---|---|---|
+| Multiple `AwardAbstract` links on `ViewAwardNoticesListUI` | `awardLinks.length >= 2` | Multi-package — fetch all |
+| `award.reasonForAward` contains `Adjacent or Contiguous` | DA Region VI INSPIRE/SAAD signature | Multi-lot — partial scope per award |
+| Title contains `(by lot)` / `by lot` / `per lot` / `line item` | Explicit | Multi-lot |
+| Title contains NIA project codes `CW\d{2}` / `MC\s*\d` / `PKG\s*[IVX\d]` | NIA Jalaur multi-package | Multi-package |
+| Bid abstract `Description` block has `\d+\.\s*One\s*\(\d\)\s*Job\s*Contract` repeating with separate budgets summing to ABC | Iloilo barangay/Passi multi-line | Multi-lot — partial scope |
+| `contractNo` matches `^JO[:\s]` (Job Order) | WVSU / ISAT-U partial-phase issuance | Partial scope, not real "discount" |
+| PAF/AFP procuring entity, dive >10% | All PAF docs are placeholder PDFs (see below) | Real award; docs are useless |
+
+### PAF / AFP placeholder docs
+
+PAF/AFP procurement (PHILIPPINE AIR FORCE, 103RD CONTRACTING OFFICE, etc.) uploads **identical placeholder PDFs** for every award notice. The PDF contains only: `NOA  (A COPY OF THIS CAN BE OBTAINED AT PAF PROCUREMENT CENTER, COLONEL JESUS, VILLAMOR AIR BASE, PASAY CITY)`. Same SHA across all 4 doc categories (NOA / BAC Resolution / NTP / Signed Contract) — verifiable: file size is ~190 KB on every PAF award. The award metadata (awardee, contract, dates) IS real and useful; the PDFs are not.
 
 ### Step 2 — Parse structured fields from the abstract page
 `document.body.innerText` reveals every field as `Label:` followed by value on next line. Useful keys: `Awardee:`, `Address:`, `Contract Amount:`, `Award Date:`, `Proceed Date:`, `Contract End Date:`, `Contract No.:`, `Reason For Award:`, `Approved Budget:`.
