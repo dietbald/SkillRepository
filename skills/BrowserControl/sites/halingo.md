@@ -467,6 +467,50 @@ Fields exposed by `Meteor.user().profile`:
 
 - `events.canBePaidBack({eventId})` — returns boolean. Evaluates whether RIZIV would reimburse this event (date inside a bilan window, treatment cap not exceeded, patient eligible). **Informational only — Halingo does NOT use it as a hard gate** at invoice generation. Useful for compliance-dashboard automation.
 
+## Title-wrapped icons need INNER button click
+
+Many Halingo action icons (invoice detail, etc.) have DOM structure `<div title="X"><button>...</button></div>`. The `title` is on the wrapper for tooltip rendering but the click handler is on the inner `<button>`. Clicking the wrapper div via `.click()` or coord-based `mouse.click()` often misses (the div takes up more space than the button).
+
+```javascript
+// ❌ Doesn't fire — clicks wrapper div
+const wrapper = [...document.querySelectorAll('div')].find(e => e.title === 'Annuleer');
+wrapper.click();
+
+// ❌ Coord click can hit empty div area
+await page.mouse.click(729, 648);
+
+// ✅ Click inner button
+await page.evaluate(() => {
+  const w = [...document.querySelectorAll('div')].find(e => e.offsetParent && e.title === 'Annuleer');
+  w?.querySelector('button')?.click();
+});
+```
+
+Used by: invoice detail action icons (Download / Print / Verstuur via mail / Reken administratiekost aan / Herinnering via mail / Annuleer), and likely other icon rows. Locate via `title="X"` selector, click the inner `<button>`.
+
+## Drag-and-drop event creation
+
+`/agenda` has a sidebar with patient avatars (left) and a calendar grid (right). The primary event-creation UX is **drag a patient avatar onto a calendar slot** — Halingo opens the "Afspraak toevoegen" modal pre-filled with patient + treatment + type + 30-min duration. Click AANMAKEN to save.
+
+```javascript
+await page.mouse.move(patientX, patientY);
+await page.mouse.down();
+await page.mouse.move(patientX+150, patientY+50, {steps: 5});  // wiggle
+await page.mouse.move(slotX, slotY, {steps: 8});
+await page.mouse.up();
+// Modal opens; click AANMAKEN
+```
+
+Clicking an empty calendar slot ALSO opens the modal, but with **empty Patiënt + Behandeling** — you'd need to fill these via react-select chevron-pick, which is fragile (typing into Patiënt is intercepted by global header search). **Prefer drag-and-drop.**
+
+The modal has 4 tabs: AFSPRAAK / VERGADERING / PRIVÉ / OVERLEG. Default is AFSPRAAK. The bilan-coverage warning ("Geen bilan gevonden waar de datum van de afspraak binnenvalt") fires inline when the event date doesn't fall inside an existing bilan window.
+
+## Bulk-invoice partitioning
+
+`/financial` → "+" → "Selecteer alle afspraken" → FACTUREER produces **one invoice per patient** (not one combined). For 11 events across 5 patients = 5 invoices. The mededeling prefix is the patient's surname (3-letter uppercase): PEE, LEM, JAN, DEW, COO. The factuurnummer counter is **per-practice** (gap-free), not per-patient.
+
+If one patient is missing aanspreking/address, the validation error TOAST surfaces inline (not blocking modal) and OTHER patients still get invoiced (partial success).
+
 ## Common interaction pitfalls
 
 - **Patient autocomplete typing intercepted by global search** — when an open modal has a `react-select` for Patiënt, do NOT type into it; the header search bar captures the keystrokes and navigates the page (dismissing the modal). Work around by clicking options with mouse or by setting the underlying React state programmatically.
