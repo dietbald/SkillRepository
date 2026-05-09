@@ -40,6 +40,11 @@ function parseArgs(argv) {
   const page = args.filter ? candidates.find(p => p.url().includes(args.filter)) : candidates[0];
   if (!page) { console.error('No matching tab.'); process.exit(1); }
 
+  // Auto-create the parent directory so callers don't have to mkdir -p first
+  const fs = require('fs');
+  const path = require('path');
+  fs.mkdirSync(path.dirname(args.outPath), { recursive: true });
+
   if (args.selector) {
     const el = await page.$(args.selector);
     if (!el) { console.error('Selector not found: ' + args.selector); process.exit(1); }
@@ -47,7 +52,6 @@ function parseArgs(argv) {
   } else {
     await page.screenshot({ path: args.outPath, fullPage: args.fullPage });
   }
-  const fs = require('fs');
   const sizeKb = (fs.statSync(args.outPath).size / 1024).toFixed(1);
   console.log(`saved ${args.outPath} (${sizeKb} KB)`);
 })();

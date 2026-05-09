@@ -745,6 +745,54 @@ E-procurement / ticketing / membership portals often have a 4-step "add to cart 
 
 Don't try to download from steps 1-3 — clicking the link calls a JS stub or refreshes the page. Walk the full flow first; the post-Submit page is also where the order/confirmation number appears (worth saving for receipts).
 
+### `react-select` dropdowns inside modals — pick by mouse, never by typing
+
+Many React apps put a `react-select` autocomplete inside a modal AND a `react-select` global search in the header. Both share the same keyboard listener. If you `page.type()` while the modal's dropdown has focus, **the keystrokes go to the header search bar instead** — which navigates the page (e.g. `/?fullName=Peeters`), dismissing the modal.
+
+**Mouse-only picking pattern** (works even when typing collides):
+```javascript
+// 1. Click the dropdown chevron (or the placeholder div) to open it
+const coords = await page.evaluate((labelText) => {
+  const lbl = [...document.querySelectorAll('label, p, span, div')]
+    .find(l => l.innerText?.trim() === labelText && l.offsetParent && l.children.length < 3);
+  if (!lbl) return null;
+  let p = lbl.parentElement;
+  for (let i = 0; i < 4 && p; i++) {
+    const dd = p.querySelector('.css-2b097c-container, [class*="container"][class*="css-"]');
+    if (dd) {
+      const r = dd.getBoundingClientRect();
+      // Aim for the chevron on the right edge — avoids the input-field click that focuses the typeable area
+      return { x: Math.round(r.x + r.width - 20), y: Math.round(r.y + r.height/2) };
+    }
+    p = p.parentElement;
+  }
+}, 'Patiënt');
+await page.mouse.click(coords.x, coords.y);
+await sleep(800);
+
+// 2. Click the desired option from the open list (no typing!)
+await page.evaluate(() => {
+  const opt = [...document.querySelectorAll('div[id^="react-select-"][id*="option"]')]
+    .filter(d => d.offsetParent !== null)
+    .find(d => /Peeters/.test(d.innerText));
+  if (opt) opt.click();
+});
+```
+
+When you must filter (long lists), inject the filter query via React's underlying state rather than the keyboard:
+```javascript
+// Set the input's value programmatically — bypasses the global keyboard listener
+await page.evaluate((q) => {
+  const inp = document.querySelector('div[role="dialog"] input[id^="react-select-"]');
+  if (!inp) return;
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+  setter.call(inp, q);
+  inp.dispatchEvent(new Event('input', { bubbles: true }));
+}, 'Pee');
+```
+
+**Modals close on outside-click.** Avoid any navigation, click on the document body, or interaction with the global header while a modal is open — the modal's onClickOutside handler will dismiss it.
+
 ### Always log out before disconnecting puppeteer
 
 Many portals (PhilGEPS, banking sites, some SaaS dashboards) reject a fresh login while another session is still active for the same user — leaves the next run unable to authenticate without manually killing the prior session in the web UI. Find the logout link by text (`Log-out`, `Logout`, `Sign out` — sometimes prefixed with `»`) and wait for the redirect to a login URL before disconnecting.
@@ -1148,12 +1196,20 @@ Every `req.continue()` / `req.abort()` / `req.respond()` in a handler is a contr
 
 ### Taking a screenshot for debugging
 
+Prefer the prebuilt `screenshot.js` tool (it auto-creates parent dirs and supports `--filter`, `--frame`, `--selector`, `--viewport`):
+```bash
+node ~/.claude/skills/BrowserControl/screenshot.js path/to/out.png --filter <site-fragment>
+```
+
+Inside ad-hoc puppeteer scripts:
 ```javascript
-await page.screenshot({ path: 'debug.png' });
+const fs = require('fs'); const path = require('path');
+fs.mkdirSync(path.dirname(outPath), { recursive: true });   // ENOENT-proof
+await page.screenshot({ path: outPath, fullPage: true });
 // Then Read the file to inspect the current page state visually
 ```
 
-Use screenshots when stuck — inspect the image before taking further action.
+Use screenshots when stuck — inspect the image before taking further action. Default to `inspect.js` (DOM snapshot) for structural questions; reach for screenshots only for layout/visual issues.
 
 **`Page.captureScreenshot timed out` on heavy pages** — pages with many large embedded images (e.g. Proton Mail email bodies with 10+ attachments) can cause `page.screenshot()` to exceed the `protocolTimeout`. Two fixes:
 1. Increase `protocolTimeout` to `180000` in `puppeteer.connect()` for sessions that need screenshots of email bodies.
