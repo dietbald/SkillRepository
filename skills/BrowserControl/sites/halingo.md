@@ -122,13 +122,58 @@ Display data is fully realistic (no `_BC_` prefix). Cleanup is via `manifest.jso
 - **Zendesk launcher** is `position: fixed` and can overlap CTAs at the bottom-right of the viewport. If a click at the visible coordinates does nothing, the launcher iframe may be capturing it — scroll the target up first or hide the launcher with `document.getElementById('launcher').style.display='none'`.
 - **No CAPTCHA observed yet** but signup may gate after repeat attempts from the same IP. If signup hangs with no error, take a `screenshot.js` and inspect for a Cloudflare/hCaptcha frame.
 
+## Logout
+
+The user-avatar pill in the header does NOT have a working dropdown menu — clicking it does nothing useful. **Two reliable logout methods:**
+
+1. `page.goto('https://dev.app.halingo.be/logout')` — server-side redirect, clears session.
+2. `await page.evaluate(() => window.Meteor.logout())` — client-side via Meteor's accounts package.
+
+After logout, navigating to `/login` shows the login form fresh.
+
+## Masked inputs — INSZ, DOB, phone
+
+`name="SSN"` (INSZ on patient creation), `name="dob"` style fields, and phone fields use a JS mask library (likely `react-input-mask` or similar) that REJECTS `page.keyboard.press(digit)` and `page.type()` — keystrokes don't reach the underlying value. The mask placeholder `__.__.__-___.__` stays unchanged.
+
+**Working pattern: React prototype-setter with the fully-formatted string:**
+```javascript
+await page.evaluate(() => {
+  const inp = document.querySelector('input[name="SSN"]');
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+  setter.call(inp, '08.05.15-042.31');   // pre-formatted with dots/dash
+  inp.dispatchEvent(new Event('input',  { bubbles: true }));
+  inp.dispatchEvent(new Event('change', { bubbles: true }));
+  inp.dispatchEvent(new Event('blur',   { bubbles: true }));
+});
+```
+
+For DOB, use DD/MM/YYYY format (Belgian convention). For phone fields with the +32 BE flag prefix, omit the country code — the auto-formatter inserts it.
+
+## Stripe billing flow
+
+Halingo uses **legacy Stripe Tokens API** (`tok_*`) — DDP method `practice.subscriptions.payment.change` accepts a `sourceId: tok_*` parameter. Test card `4242 4242 4242 4242` with expiry `12/30` and CVC `123` produces a valid token, and the DDP method returns success — but staging behavior currently does not reflect the saved card in the UI ("Geen selecteerd" persists). May indicate the Stripe `tok_` API is deprecated and the backend is silently failing the attach; suggest using Stripe Elements PaymentElement (`pm_*`) instead.
+
+The Stripe Card Element lives in iframe with `name^="__privateStripeFrame"` — typing into it requires `frame.$(...).type()` against fields `input[name="cardnumber"]`, `input[name="exp-date"]`, `input[name="cvc"]`. Find the frame via `page.frames().find(f => /elements-inner-card/.test(f.url()))`.
+
+## DDP method names captured
+
+| Method | What it does |
+|---|---|
+| `users.register` | Create new user account from /register form |
+| `login` | Authenticate user (followed by `users.register` for auto-login on signup) |
+| `practice.add` | Create a new practice — payload includes `info.{contact, name, address, companyNumber, bankAccount, info}` |
+| `practice.subscriptions.payment.change` | Change payment method on a subscription. Params: `{subscriptionId, method, sourceId}`. Currently silently failing. |
+
+Plus collection subscriptions: `users.profileData`, `practices`, `practice`, `practicechat`, `pending_invoices`, `practiceInvoices`, `notifications.new`, `kadira_settings`, `AnalyticsUsers`, `plans`, `subscriptions`, `practiceUsers`, `referrals`.
+
 ## Status by phase
 
 - ✅ Phase A — login + signup structure captured, recipe written
-- ⏳ Phase B — signup of Nele Van den Broeck (TEST_CANDIDATE2)
-- ⏳ Phase C — practice setup
-- ⏳ Phase D — 113-feature tour
-- ⏳ Phase E — Belgian regulatory probes
+- ✅ Phase B1 — Liam (Nele Van den Broeck) signed up, userId `nrBKA6xYo9jCL8SjY`
+- ✅ Phase B2 — Marcus (Sophie Dubois) signed up via direct /register, userId `XdJvrzr9pFF93GDBd`, FR locale
+- ✅ Phase C — Practice "Praktijk Van den Broeck" created on free trial, practiceId `rkdDPLXHh54cnLYD3`
+- 🚧 Phase D — Per-area tour started (identity ✅, practice-mgmt partial, patient-mgmt 1/8 patients created), continuing
+- ⏳ Phase E — Belgian regulatory probes (overlapping with D)
 - ⏳ Phase F — reporting + commit
 
 Working directory for outputs: `C:/Repos/halingo_uat_2026-05-08/`
