@@ -431,6 +431,17 @@ Object.keys(Meteor.connection._methodHandlers).sort()
 
 **Mongo collection:** `longTherapy` (separate from `patientFiles`). Subscribed when on `/patients/<id>?tabIndex=4`.
 
+## INSZ / SSN validation has gaps (regulatory defect on dev staging)
+
+Halingo enforces only the textual format `\d{2}\.\d{2}\.\d{2}-\d{3}\.\d{2}` in its `SSN` field. It does **NOT** enforce:
+- mod-97 check digit math
+- date plausibility (00.00.00-000.00 is accepted)
+- required-field at schema level (patients can exist with no SSN)
+
+Probed via `Meteor.call('patientFile.add', {SSN: <bad value>})`. Documented as a HIGH-severity defect in `_missing_docs.md`.
+
+For automation: don't rely on Halingo's INSZ validation as a safety net — generate INSZ values that pass mod-97 yourself before injecting.
+
 ## Common interaction pitfalls
 
 - **Patient autocomplete typing intercepted by global search** — when an open modal has a `react-select` for Patiënt, do NOT type into it; the header search bar captures the keystrokes and navigates the page (dismissing the modal). Work around by clicking options with mouse or by setting the underlying React state programmatically.
