@@ -173,6 +173,7 @@ The Stripe Card Element lives in iframe with `name^="__privateStripeFrame"` — 
 | `invoices.add.all.therapists` | Generate patient invoices for selected events. Params: `{practiceId, eventIds[]}`. **Fails with `invoices.create.incompleteUser`** if user-level billing identity (name, address, IBAN, BTW, RIZIV) is missing — this data is per-user, NOT per-practice. |
 | `invoices.search` | Search/filter invoices on /financial. |
 | `invoices.statistics.earnings` | Drive the Inkomsten/Ontvangen monthly chart. |
+| `invoices.mail` | Email an invoice. Params: `{invoiceId}`. **Fails with `invoices.mail.noText`** if the practice's mail-template is empty — set the template at Praktijk → INSTELLINGEN before testing email-send flows. |
 
 ## Invoice identity model — TWO numbers per invoice
 
