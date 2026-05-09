@@ -4,7 +4,7 @@ Apache Wicket portal. Two BDO business portals exist — confirm which one the u
 - **CURRENT (BOB / Wicket)**: `https://business.bdo.com.ph/fo/login` ← this file
 - **NEW (CBX)**: `https://www.businessonline.bdo.com.ph/cbx/CBXLogin.jsp` (separate flow, not covered here)
 
-Status: **partially verified 2026-05-09** — login + OTP automated, dashboard navigation pattern confirmed. Per-page extraction flows (Transaction History, Account Portfolio, eSOA) NOT yet completed end-to-end; first attempt was killed by session expiry mid-debug.
+Status: **verified 2026-05-09** — login + OTP automated, dashboard nav, Transaction History (PDF + XLS) for all 3 BICC accounts, Account Portfolio (PDF) all working end-to-end via `page.evaluate(fetch())` against URLs extracted from button onclick handlers.
 
 ---
 
@@ -91,21 +91,44 @@ Function codes are stable across sessions. After landing on `/fo/FCxxxx`, the fo
 - "Search" button (`<input type="submit" value="Search">`, id varies)
 - "Clear" button (id varies)
 
-**90-day cap**: BDO refuses date ranges longer than ~90 days for transaction history. Always chunk:
-- `2025-04-22 → 2025-07-21`
-- `2025-07-22 → 2025-10-21`
-- `2025-10-22 → 2026-01-21`
-- `2026-01-22 → 2026-04-21`
-- `2026-04-22 → today`
-- (older: try one quarter at a time; portal may accept up to 12-18 months back)
+**~90-day historical floor**: BDO BOB Transaction History rejects date-from values older than ~90 days from today with the error `From and To Dates should be later than MM/DD/YYYY`. The Maker view is *not* a substitute for monthly eSOAs — for older history, request eSOAs (different role required) or branch-issued bank certificates. Treat BDO BOB as a "rolling 90-day window" data source, not an archive.
 
-After Search, a result table renders with a "Download" link (XLS preferred) and likely a PDF option. Both worth saving — XLS has cleaner columns, PDF is the visual archive.
+**Date-range select** (`name="dateRangePanel:viewingType"`) options:
+| value | label |
+|---|---|
+| 0 | Current Day |
+| 1 | Previous Day |
+| 2 | Last 7 Days |
+| 3 | Last 30 Days |
+| 4 | Last 60 Days |
+| 5 | Last 90 Days |
+| 6 | Custom Date Range — reveals dateFrom / dateTo text fields after AJAX |
 
-**Download-button capture pattern** (NOT yet verified for BDO — reuse the BPI BizLink approach as starting point):
-- Watch for `application/vnd.ms-excel` or `application/pdf` Content-Type via CDP `Fetch` domain
-- Fallback: `Browser.setDownloadBehavior` with `eventsEnabled: true`, then real `mouse.click` on the link
+For Custom Date Range, fields are `dateRangePanel:daysContainer:dateFrom` and `dateTo`, format `MM/DD/YYYY`. Type via `page.type()` — Wicket reads server-side state.
+
+**Download (verified pattern)**: After Search, three Export buttons render: PDF, XLS, CSV. PDF and XLS use `onclick="window.location.href='?x=...'"` — extract the URL and fetch in-page (see the general rule "Export buttons with `onclick=...location.href`" in skill.md). CSV uses `wicketAjaxGet('?x=...')` — different mechanism, NOT yet captured. PDF + XLS together are sufficient for reconciliation; XLS has clean columns, PDF is the visual archive. Filenames returned via `Content-Disposition`: `Tran_Hist_PdfAndXls.pdf` / `.xls`.
 
 ---
+
+## BICC account dropdown values (FC9220)
+
+`<select name="accountPanel:wmc:account">` options for the BICC corporation:
+
+| Account # | Type | Label | option value |
+|---|---|---|---|
+| 007470227579 | Savings (Collection) | `BELGIAN ILOILO CONSTRUCTION CORP-PHP-SA` | `8ac7a29989f3e008018a45b0f8124675` |
+| 007470229547 | Savings (Tax)        | `BICC TAX-PHP-SA`                          | `8ac7a2998af6bb57018b4f43f32d4bfc` |
+| 007478006789 | Current (Disb)       | `BICC OUT-PHP-CA`                          | `8ac7a2998af6bb57018b4f43f32d4bfd` |
+
+Suffixes: `-PHP-SA` = peso savings, `-PHP-CA` = peso current. Option values are corporation-stable across sessions but not guaranteed across years — re-scout if a value stops resolving.
+
+## Account Portfolio (FC9210)
+
+Function code: `FC9210`. Single page, no form to fill. Renders a summary table of all 3 accounts with current balances. Export buttons same pattern as TxnHist:
+- **Export to PDF** — `onclick="window.location.href='?x=...'"` → fetch in-page (works)
+- **Export to CSV** — `wicketAjaxGet(...)` (NOT captured yet)
+
+PDF is the live-balance stop-anchor for reconciliation.
 
 ## Roles & module visibility
 

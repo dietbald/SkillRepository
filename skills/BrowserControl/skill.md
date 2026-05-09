@@ -1449,6 +1449,55 @@ Critical points:
 
 Verified on BPI BizLink (Apache Wicket portal — `bpibizlink.com`). Likely the right approach for any other portal where Browser/Network domains all fail to capture an attachment download.
 
+### Export buttons with `onclick="window.location.href='?x=...'"` — extract the URL, fetch in-page
+
+A common pattern on legacy enterprise portals (Wicket, classic ASP.NET, JSF): the "Export to PDF / XLS / CSV" button is rendered as `<input type="button">` with an inline `onclick` handler that just sets `window.location.href` to a session-tokened relative URL. Server then responds with the file as `Content-Disposition: attachment`.
+
+DON'T try to capture this with a click + CDP `Fetch` domain — three sequential `mouse.click()` calls compound state, the response body is consumed by Chrome's download manager before pause/Response can intercept, and `Browser.downloadWillBegin` doesn't fire reliably on legacy onclick-href patterns.
+
+**DO extract the URL out of the `onclick` attribute and fetch it in-page** — uses the page's session cookies, gets clean bytes:
+
+```javascript
+const exportUrls = await page.evaluate(() => {
+  const out = {};
+  for (const el of document.querySelectorAll('input[type="button"], input[type="submit"], a, button')) {
+    const v = (el.value || el.innerText || '').trim();
+    const oc = el.getAttribute('onclick') || '';
+    const m = oc.match(/window\.location\.href\s*=\s*'(\?x=[^']+|https?:\/\/[^']+)'/);
+    if (m) {
+      if (/PDF/i.test(v))      out.pdf = m[1];
+      else if (/XLS|EXCEL/i.test(v)) out.xls = m[1];
+      else if (/CSV/i.test(v)) out.csv = m[1];
+    }
+  }
+  return out;
+});
+
+const baseUrl = page.url().split('?')[0];
+for (const [fmt, relUrl] of Object.entries(exportUrls)) {
+  const url = relUrl.startsWith('http') ? relUrl : baseUrl + relUrl;
+  const r = await page.evaluate(async (u) => {
+    const r = await fetch(u, { credentials: 'include' });
+    if (!r.ok) return { ok: false, status: r.status };
+    const ab = await r.arrayBuffer();
+    const bytes = new Uint8Array(ab);
+    let bin = ''; for (let i = 0; i < bytes.length; i += 32768)
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
+    return { ok: true, ct: r.headers.get('content-type'),
+             cd: r.headers.get('content-disposition'), b64: btoa(bin) };
+  }, url);
+  if (r.ok) fs.writeFileSync(`out.${fmt}`, Buffer.from(r.b64, 'base64'));
+}
+```
+
+The `Content-Disposition: attachment; filename="..."` header in the response usually contains the bank/portal's preferred filename — preserve it if your downstream pipeline dedupes by content hash.
+
+**Caveat — AJAX-mode export buttons** (e.g. `onclick="wicketAjaxGet('?x=...', ...)"`, or React/Angular handlers wired up programmatically) DON'T expose the URL in `onclick`. For those:
+- Look for the URL in network inspector (Chrome DevTools) and grep the page HTML for the path fragment
+- Or trigger the button while a `page.on('response', ...)` handler is registered, then read `r.buffer()` from the matching response (works when the response is a regular AJAX, not a download stream)
+
+Verified on BDO BOB (Wicket) — Export to PDF/XLS work via this pattern; Export to CSV uses `wicketAjaxGet` and needs a different approach.
+
 ### `<textarea readonly>` values are invisible to `innerText` — read `.value` or parse HTML
 
 `document.body.innerText` (and `document.body.textContent`) skips `<textarea>` element values — you get the label text but not the content of the textarea. This silently breaks API key extraction, confirmation codes, and any form where the value is pre-filled into a read-only textarea.
