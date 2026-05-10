@@ -615,6 +615,14 @@ Yearly ≈ 10× monthly (2-month discount). All tiers have full feature access �
 
 `Praktijk / Kabinet / Thuis / School / Revalidatie / Video consultatie`. Picking Video consultatie shows a video icon in the field; no link input — link auto-generates server-side. Each locatie maps to a different RIZIV nomenclature suffix per pathology.
 
+## Bilan expiration auto-flag
+
+Each treatment row on patient TERUGBETALING tab shows a clipboard-! icon next to the treatment name. Hover tooltip: "De terugbetaling is verlopen" — auto-flags expired bilans (Belgian 180-day rule: bilan validity expires 180 days after creation).
+
+## Tags widget toggle pattern
+
+Patient profile right-card "Tags" header has a bookmark-shaped icon at top-right. Click toggles edit mode: input field + clear-X button. Free-text tag entry, save-on-blur. Same pattern likely on other inline-edit widgets.
+
 ## Common interaction pitfalls
 
 - **Patient autocomplete typing intercepted by global search** — when an open modal has a `react-select` for Patiënt, do NOT type into it; the header search bar captures the keystrokes and navigates the page (dismissing the modal). Work around by clicking options with mouse or by setting the underlying React state programmatically.
