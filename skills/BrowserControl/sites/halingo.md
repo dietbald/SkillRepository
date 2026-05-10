@@ -572,6 +572,22 @@ The 5 conditions surfaced in the GENEREER info-tooltip are necessary BUT NOT SUF
 
 If steps 1-2 are met but 3-4 are missing, GENEREER runs silently (no 5-condition tooltip) and produces 0 facturen.
 
+## /financial FACTUREN filter (9 statuses, 6 sort options)
+
+Click FILTER on /financial → FACTUREN tab → modal with:
+- 6 sort options: Datum oud→nieuw, Datum nieuw→oud, Naam oplopend, Naam aflopend, Bedrag oplopend, Bedrag aflopend
+- 9 status checkboxes: Betaald, Openstaand, Onbetaald, Gedeeltelijk betaald, Gemaild, **Afgeprint**, **Derde betaler**, Geannuleerd, **Ongeldig**
+
+The 3 bold statuses (Afgeprint / Derde betaler / Ongeldig) are NOT in the inline-row dropdown — they're filter-only. So the full state-machine has 8 reachable states (Openstaand, Onbetaald, Gedeeltelijk betaald, Geprint/Afgeprint, Gemaild, Betaald, Geannuleerd, Ongeldig) plus the Derde betaler flag.
+
+## /riziv R-Waarde tracker
+
+Annual RIZIV-points tracker. Shows total R-Waarde (sum of per-code R-points across all sessions) + breakdown by month + verstrekkingen met/zonder nomenclatuur. Year + Maand filters. Useful for therapist accreditation compliance — Belgian RIZIV requires therapists to maintain a minimum annual R-Waarde threshold.
+
+## Rosa external sync (`/rosa`)
+
+Token-based connection to pro.rosa.be (Belgian online appointment platform). Login at hp-calendar.rosa.be. Status field shows "Niet verbonden" / "Verbonden". User pastes token from Rosa; clicks VERBINDEN. Allows publishing public agenda for online patient bookings.
+
 ## Common interaction pitfalls
 
 - **Patient autocomplete typing intercepted by global search** — when an open modal has a `react-select` for Patiënt, do NOT type into it; the header search bar captures the keystrokes and navigates the page (dismissing the modal). Work around by clicking options with mouse or by setting the underlying React state programmatically.
