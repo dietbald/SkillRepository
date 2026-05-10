@@ -526,6 +526,52 @@ If a signed-up user hasn't filled their profile, the top-right user widget shows
 
 Halingo dev staging exhibited auth instability — 5+ consecutive `/login` attempts returning "Internal server error" inline, then suddenly succeeding after a 2-minute back-off. Affects both test accounts independently. Implication: automation MUST retry-with-backoff on login attempts.
 
+## Derde betaler toggle (PER-TREATMENT, not per-patient)
+
+The Derde betaler (third-payer) toggle lives on the **expanded treatment row** inside the patient TERUGBETALING tab — NOT on the patient profile. Click chevron at right of treatment row to expand → toggle "Derde betaler" appears next to "Alarmfunctie einde terugbetaling". Default OFF. Auto-saves on click.
+
+```javascript
+// To toggle:
+await page.mouse.click(/* Derde betaler switch coords on the expanded treatment row */);
+
+// To verify:
+await page.evaluate(() => {
+  const lbl = [...document.querySelectorAll('label, p, div, span')].find(e => e.offsetParent && (e.innerText||'').trim() === 'Derde betaler');
+  return lbl?.parentElement?.querySelector('input[type=checkbox]')?.checked;
+});
+```
+
+A patient with multiple treatments can have one in derde-betaler and another in tiers-garant — the flag is treatment-scoped.
+
+**Important: NOT retroactive.** Toggling Derde betaler ON for a treatment AFTER sessions have been billed as patient invoices does NOT cancel + re-issue those invoices to verzamelstaat. The toggle only affects FUTURE invoice generation. To migrate existing invoices, manually Annuleer them and re-bill.
+
+## Ziekenfonds picker (Belgian RIZIV mutuality codes)
+
+Patient INFO tab → Medische gegevens accordion → click chevron to expand → "Ziekenfonds" field shows a 95-option autocomplete picker with real RIZIV codes:
+
+```
+(100) Landsbond der Christelijke Mutualiteiten — Haachtsesteenweg 579, 1031 Brussel
+(107) Verbond M.R.B. - Verbond van mutualiteiten, Ziekteverzekering, Alle risico's in België
+(120) Christelijke Mutualiteit Vlaanderen
+(134) Mutualité chrétienne (FR equivalent of 100)
+(200) Landsbond van de Neutrale Ziekenfondsen
+... (95 total)
+```
+
+Click the option (mouse coords on the LI element); DOM `.click()` does NOT register react-select changes. After picking, the field shows "(NNN) <name>" instead of the placeholder.
+
+## Verzamelstaat full prerequisite chain (corrected)
+
+The 5 conditions surfaced in the GENEREER info-tooltip are necessary BUT NOT SUFFICIENT. The full chain is:
+
+1. **Treatment-level**: Derde betaler toggle ON (on the expanded treatment row).
+2. **Patient-level**: Ziekenfonds field set (95-option picker; pick a real mutuality code, not literal "ziekenfonds").
+3. **Session-level**: Each event under that treatment has a **certificate (getuigschrift) generated**. Halingo creates the certificate from the bilan-content; if the bilan is empty/incomplete, the certificate-warning icon shows on each invoice and the verzamelstaat won't batch.
+4. **Bilan-level**: The bilan must be saved AND printed (status flag).
+5. **GENEREER per ziekenfonds**: only at this point does Halingo bundle eligible certificates into a verzamelstaatfactuur per mutuality.
+
+If steps 1-2 are met but 3-4 are missing, GENEREER runs silently (no 5-condition tooltip) and produces 0 facturen.
+
 ## Common interaction pitfalls
 
 - **Patient autocomplete typing intercepted by global search** — when an open modal has a `react-select` for Patiënt, do NOT type into it; the header search bar captures the keystrokes and navigates the page (dismissing the modal). Work around by clicking options with mouse or by setting the underlying React state programmatically.
