@@ -588,6 +588,33 @@ Annual RIZIV-points tracker. Shows total R-Waarde (sum of per-code R-points acro
 
 Token-based connection to pro.rosa.be (Belgian online appointment platform). Login at hp-calendar.rosa.be. Status field shows "Niet verbonden" / "Verbonden". User pastes token from Rosa; clicks VERBINDEN. Allows publishing public agenda for online patient bookings.
 
+## Plan-tier user limits (BASIC=1 / STANDARD=2-5 / PREMIUM=5+)
+
+`/practices/users` "Lid toevoegen" button is `<button disabled title="Praktijk heeft het limiet van toegelaten gebruikers bereikt, verhoog het plan indien u meer gebruikers wilt uitnodigen">` on BASIC. To enable invitations, upgrade to STANDARD (€495/yr, 2-5 users) or PREMIUM (€715/yr, 5+ users).
+
+Plan tiers (verified at `/practices/subscription/change`):
+
+| Tier | Monthly | Yearly | Users |
+|---|---|---|---|
+| Basis | €24.2/Maand | €220/Yr | 1 |
+| Standaard | €54.45/Maand | €495/Yr | 2-5 |
+| Premium | €78.65/Maand | €715/Yr | 5+ |
+
+Yearly ≈ 10× monthly (2-month discount). All tiers have full feature access — only user-limit differs.
+
+## Agenda — 4 event types
+
+| Type | Fields |
+|---|---|
+| AFSPRAAK (default) | Therapeut, Patiënt, Behandeling, Type, Subtype, Start, Einde, Locatie, Prijs, Kilometer, Herhalen |
+| VERGADERING | Titel, Start, Einde, Herhalen |
+| PRIVÉ | Titel (required), Start, Einde, Herhalen |
+| OVERLEG | Start, Einde, Locatie, Prijs, Kilometer (no Patiënt — inter-professional case meeting; billable) |
+
+## Locatie picker (6 options including telehealth)
+
+`Praktijk / Kabinet / Thuis / School / Revalidatie / Video consultatie`. Picking Video consultatie shows a video icon in the field; no link input — link auto-generates server-side. Each locatie maps to a different RIZIV nomenclature suffix per pathology.
+
 ## Common interaction pitfalls
 
 - **Patient autocomplete typing intercepted by global search** — when an open modal has a `react-select` for Patiënt, do NOT type into it; the header search bar captures the keystrokes and navigates the page (dismissing the modal). Work around by clicking options with mouse or by setting the underlying React state programmatically.
