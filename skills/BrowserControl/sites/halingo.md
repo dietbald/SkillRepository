@@ -623,6 +623,14 @@ Each treatment row on patient TERUGBETALING tab shows a clipboard-! icon next to
 
 Patient profile right-card "Tags" header has a bookmark-shaped icon at top-right. Click toggles edit mode: input field + clear-X button. Free-text tag entry, save-on-blur. Same pattern likely on other inline-edit widgets.
 
+## Agenda settings + iCal feed
+
+`/agenda` → gear icon (top-right) → settings page. iCal feed URL only generates when "Agenda weergeven op andere apparaten" toggle is ON: `https://dev.app.halingo.be/api/agenda/private/<17-char-token>` — paste into Google Calendar / Outlook for read-only sync.
+
+## Aanbrengbonus referral link format
+
+`/practices/subscription` → DOE MEE on Aanbrengbonus → modal exposes referral link: `https://dev.app.halingo.be/register?referral_user_id=<userId>&locale=<nl|fr>`. Each successful conversion = 1 free month for the referring user.
+
 ## Common interaction pitfalls
 
 - **Patient autocomplete typing intercepted by global search** — when an open modal has a `react-select` for Patiënt, do NOT type into it; the header search bar captures the keystrokes and navigates the page (dismissing the modal). Work around by clicking options with mouse or by setting the underlying React state programmatically.
