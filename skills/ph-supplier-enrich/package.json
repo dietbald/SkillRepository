@@ -1,0 +1,25 @@
+{
+  "name": "ph-supplier-enrich",
+  "version": "0.1.0",
+  "description": "Enrich Philippine supplier names with full registered names from DuckDuckGo, DTI BNRS, and SEC.",
+  "type": "module",
+  "main": "src/enrich.js",
+  "bin": {
+    "ph-supplier-enrich": "src/enrich.js"
+  },
+  "scripts": {
+    "enrich": "node src/enrich.js",
+    "test:ddg": "node src/test-ddg.js",
+    "test:dti": "node src/test-dti.js",
+    "test:sec": "node src/test-sec.js"
+  },
+  "dependencies": {
+    "puppeteer": "^23.0.0",
+    "csv-parse": "^5.5.0",
+    "csv-stringify": "^6.5.0",
+    "minimist": "^1.2.8"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
