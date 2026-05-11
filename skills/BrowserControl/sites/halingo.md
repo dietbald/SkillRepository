@@ -649,3 +649,138 @@ Patient profile right-card "Tags" header has a bookmark-shaped icon at top-right
 - ⏳ Phase F — reporting + commit
 
 Working directory for outputs: `C:/Repos/halingo_uat_2026-05-08/`
+
+---
+
+## Session 3 addenda (2026-05-11) — recipes that override the above
+
+### Bilan write+save round-trip — RESOLVED (was deferred)
+
+**Voorschrijvende arts typeahead accepts brand-new (unknown) physician names**, contradicting earlier #189 finding. The full save gesture:
+
+1. Patient `?tabIndex=1` (TERUGBETALING) → wait for treatment card render.
+2. `clickInnerButton(page, 'Klap open')` on the treatment.
+3. Wait until `document.body.innerText` contains "Voorschrijvende arts" (poll up to ~30s — staging is slow).
+4. Find the label's coords (`label.getBoundingClientRect()`) and **mouse-click ~80px right + 30px down** of the label top-left — the input itself sits below the label inside a react-select container.
+5. **Type** the new physician name (e.g. `Dr. UAT Test 1778502424463`) at delay ~30 ms/char.
+6. Press **Enter** → the typed text appears in the field with an X-clear icon (as if a real option was selected).
+7. Press **Tab** → commits the selection.
+8. **Click elsewhere on the page** (e.g. `page.mouse.click(800, 200)`) to blur.
+9. Wait **5 s** for the debounced auto-save (no Opslaan button is involved on Mathias's bilan — auto-save fires invisibly; DDP frame capture often misses it because the CDP listener attaches after the save method goes out).
+10. Reload the patient page; the physician name is in the DOM.
+
+**Pitfall the previous recipe missed:** focusing the react-select input via `document.getElementById('react-select-N-input').focus()` does NOT keep keyboard focus — typed characters end up in the **global Zoeken... search bar** at the top of the chrome instead. Always click the field's bounding-rect coords with `page.mouse.click()` first, then type.
+
+Reference: `test-scripts/315-bilan-save-opslaan.js`.
+
+### Email-field selector pattern (avoid the global search trap)
+
+The same global-search trap applies to **every** form input that lives on a patient detail page. To target a labeled input safely:
+
+```javascript
+await page.evaluate((value) => {
+  const lbl = [...document.querySelectorAll('label')]
+    .find(e => e.offsetParent && /^E-mailadres$/i.test((e.innerText||'').trim()));
+  let wrapper = lbl.parentElement;
+  let inp = wrapper.querySelector('input');
+  // walk up until the wrapper contains EXACTLY one input (the labelled one)
+  while (inp && wrapper.querySelectorAll('input').length > 1) {
+    wrapper = wrapper.parentElement; inp = wrapper.querySelector('input');
+  }
+  inp.focus();
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+  setter.call(inp, value);
+  inp.dispatchEvent(new Event('input',  { bubbles: true }));
+  inp.dispatchEvent(new Event('change', { bubbles: true }));
+  inp.blur();
+}, throwawayEmail);
+```
+
+`<label>.parentElement` is the field wrapper; if it contains more than one input (because Material UI sometimes nests several labels into a single Grid row), keep walking up until you find an isolating wrapper. The previous naive `label.closest('div').parentElement.querySelector('input')` returned the FIRST input in the form (usually Voornaam) and silently corrupted the wrong field.
+
+### Throwaway mailbox: Mailinator works
+
+Halingo delivers to `*@mailinator.com` for invitations, Aanbrengbonus, and WIJZIG E-MAILADRES verification mails (all confirmed). **1secmail / Ethereal / Mailpit / Mailtrap don't apply** — Halingo is the sender, not us, so SMTP-capture services are useless here.
+
+Helper at `C:/Repos/halingo_uat_2026-05-08/test-scripts/_mailbox.js`:
+
+```javascript
+const { mkAddr, poll } = require('./_mailbox');
+const addr = mkAddr('uat-something');   // → uat-something-<ts>@mailinator.com
+// trigger flow that sends mail to `addr`
+const res = await poll(addr, { timeoutMs: 90000, intervalMs: 5000 });
+// res = { ok: true, msgs: [{ subject, fromfull, time, ... }] }
+```
+
+The Mailinator public API is `https://api.mailinator.com/api/v2/domains/public/inboxes/<local-part>` — no auth needed.
+
+### DDP method addenda
+
+| Method | Notes / payload |
+|---|---|
+| `patientFile.update` | Auto-save on field blur (~3-6 s debounce). Params: `{patientFileId, fields:{contactDetails:{email}, firstName, lastName, address:{...}, ...}}`. Server responds with `{msg:"changed", collection:"patientFiles", fields:{...}}`. |
+| `invoices.mail` | **Behaves badly even with a non-empty mail template (see below).** Previous recipe entry says "Fails with `invoices.mail.noText` if template empty" — that's only one failure mode. With Liam's setup we observed a **silent hang**: method fires, no `{"msg":"result"}` arrives in 30+ s, no SMTP delivery, no UI feedback. Bug is server-side in the handler. Tracked as defect #310. |
+| `practices.invite` (inferred) | Triggered by Praktijk → Leden → Lid toevoegen → Opslaan (modal: "Nodig iemand uit tot deze praktijk"). Sends mail with subject **"Praktijkuitnodiging"** in ~8 s. Mailinator-friendly. Disabled on BASIC plan (1-user limit) — must upgrade plan first. |
+| (Aanbrengbonus VERZEND path) | Method name not captured (likely HTTP POST, not DDP method). Confirmed mail-send works — recipient gets `"Nele Van den Broeck heeft je uitgenodigd!"` — but UI gives **no toast / modal stays open**. Defect #178 is a UX defect, not functional. |
+
+### Plan upgrade DDP shape
+
+Clicking **Kies** on a plan tile at `/practices/subscription/plan/change` and confirming **JA** sends a method that flips the `subscriptions` collection field `planId`. The reactive subscription `plans` returns three docs:
+
+```
+{name:"BASIC",    price:2420, maxUsers:1}
+{name:"STANDARD", price:5445, maxUsers:5,  highlight:true}
+{name:"PREMIUM",  price:7865, maxUsers:-1, highlight:false}
+```
+
+`maxUsers: -1` means unlimited. Prices are in **cents** (€ ×100). Upgrade does NOT require re-entering a card if one is already on file (the Stripe customer carries over).
+
+### /financial — 4 tabs (not 1)
+
+Earlier recipe sections mention `/financial FACTUREN` only. The page actually exposes 4 tabs:
+
+| Tab | Content |
+|---|---|
+| `FACTUREN` | Per-patient invoices list. 9-status FILTER (already documented above). |
+| `VERZAMELSTAATFACTUREN` | Bundled mutuality batches. Empty until verzamelstaat prereqs met. GENEREER opens the per-ziekenfonds chooser. |
+| `COMMISSIE` | Commission invoices (events.create auto-generates one per appointment). No mark-paid affordance — that's a gap. |
+| `OVERZICHT SESSIES` | Aggregated session counts by Beschrijving (e.g. "Logopedische therapie: 30 min"), PLAATS (Kabinet/Thuis), PRIJS. Top-right shows "Niet gefactureerde sessies" counter. Useful for verifying invoice-completeness before VERZAMELSTAAT batch. |
+
+### /agenda/settings full content
+
+The existing "Agenda settings + iCal feed" section understates what's there. Full page:
+
+- **Gepersonaliseerde weergave** card: Beperk weergegeven uurbereik toggle + Beginuur/Einduur dropdowns (default 08:00–20:00), Start kalenderweergave dropdown (`Bovenaan` / others), **Gepersonaliseerde weergave** dropdown = **`3 Dagen`** (custom-N-day view, in addition to Day/Week/Month).
+- **Afspraakinstellingen** card: brightness toggle "De helderheid van vroegere afspraken lichter weergeven" + **Standaard kleur per type afspraak** matrix (4 event types × 7 colors = 28 swatches).
+- **Instellingen voor delen van agenda** card: toggle + iCal URL (already documented).
+
+### Patient FILTER popup
+
+Click `FILTER` on `/patients` opens a popup with:
+
+- **2 sort options**: Oplopend / Aflopend
+- **4 status checkboxes**: `In opstart` · `Actief` · `Inactief` · `Wachtlijst`
+
+Wachtlijst is also a per-patient badge (set via the WACHTLIJST button on the patient detail header). Inactief filtering surfaces archived patients; the actual archive-toggle gesture (to flip a patient INTO Inactief) is not yet documented and warrants a probe.
+
+### Per-invoice kebab — 7 items
+
+Earlier recipe mentions "5 actions on row icons" loosely; the kebab (⋮) on each invoice row in patient FACTURATIE actually exposes **7 items**:
+
+`Bekijk · Download · Print · Verstuur via mail · Reken administratiekost aan · Herinnering via mail · Annuleer`
+
+For GEANNULEERD invoices the menu **incorrectly still shows all 7** including Annuleer + Reken administratiekost (defect #225). Verstuur via mail + Herinnering via mail both inherit the `invoices.mail` hang defect (#310).
+
+### Active defect catalog (as of 2026-05-11 evening)
+
+| # | Sev | Defect |
+|---|---|---|
+| 178 | LOW | Aanbrengbonus VERZEND has no UI feedback (toast/modal-close). Mail IS actually sent. UX-only. |
+| 181 | LOW | Global search non-functional. |
+| 182 | MED | Newsfeed "hier" links go to Zendesk EDITOR (admin-only) URLs. |
+| 193 | HIGH | Patient DOCUMENTEN accepts arbitrary file types (.txt, .exe) — no MIME validation. |
+| 220 | MED | /financial Openstaand vs Dashboard aggregator inconsistency (€460,44 vs €306,96). |
+| 225 | MED | GEANNULEERD invoice kebab still shows all 7 items including Annuleer + Reken admin. |
+| 226 | HIGH | INSZ `99.99.99-999.99` accepted (no mod-97, no DOB check). |
+| 249 | HIGH | Signup auto-login without email verification ("Niet gevalideerd" persists). |
+| 310 | HIGH | `invoices.mail` DDP method hangs — no response in 25+ s, no mail delivered, no UI feedback. Tested with valid mail template assumed; needs retest after explicitly setting one at Praktijk → INSTELLINGEN. |

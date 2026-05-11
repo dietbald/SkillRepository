@@ -4,3 +4,6 @@
 # OS noise
 .DS_Store
 Thumbs.db
+
+# Node / npm artifacts inside skill packages
+**/node_modules/
