@@ -47,7 +47,8 @@ Claude will handle the clone, junction/symlink, and command copy automatically, 
 | `biccpayroll` | Generate BICC's semi-monthly payroll (Cutoff A 25th, Cutoff B 10th). Computes attendance from raw biometric+OBT+leave+OT sheets, generates the password-protected payroll xlsx, runs an 11-check verification. Windows-only (Excel COM via win32com). |
 | `odoo-v19-guide.md` | Odoo v19 Online (SaaS) customization expert. Single-file skill. |
 | `ollama-runner.md` | Local Ollama model runner. |
-| `uncodixfy.md` | Strip ChatGPT-/AI-tells from text (em-dashes, hedging, "delve", etc.). |
+| `uncodixfy.md` | Prevent generic AI/Codex **UI** aesthetics in frontend code (gradients, glassmorphism, oversized rounded corners, eyebrow labels, etc.). Visual, not prose. |
+| `humanizer` | Remove signs of AI-generated **prose** (em-dashes, copula avoidance, -ing depth-faking, tricolons, knowledge-cutoff hedges, sycophancy, etc.). Three modes: humanize a passage, audit a multi-page corpus / site, or voice-match against a writing sample. Adapted from [blader/humanizer](https://github.com/blader/humanizer) (MIT) + Wikipedia's "Signs of AI writing". |
 
 ### Commands (`commands/`)
 
