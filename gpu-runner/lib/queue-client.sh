@@ -28,11 +28,11 @@ JOB_INPUT_DIR="$HOME/input_$JOB_ID"
 
 # Upload input file directly via SCP
 echo "[queue] Submitting $TASK_TYPE job: $JOB_ID" >&2
-ssh $SSH_OPTS ubuntu@"$PUBLIC_IP" "mkdir -p ~/input_$JOB_ID ~/output/$JOB_ID ~/queue ~/done"
-[ -n "$INPUT_FILE" ] && scp $SSH_OPTS "$INPUT_FILE" ubuntu@"$PUBLIC_IP":~/input_$JOB_ID/
+ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" -i "$KEY_PATH" ubuntu@"$PUBLIC_IP" "mkdir -p ~/input_$JOB_ID ~/output/$JOB_ID ~/queue ~/done"
+[ -n "$INPUT_FILE" ] && scp -o StrictHostKeyChecking=no -P "$SSH_PORT" -i "$KEY_PATH" "$INPUT_FILE" ubuntu@"$PUBLIC_IP":~/input_$JOB_ID/
 
 # Write job spec directly on remote
-ssh $SSH_OPTS ubuntu@"$PUBLIC_IP" "cat > ~/queue/${JOB_ID}.job" <<EOF
+ssh -p "$SSH_PORT" $SSH_OPTS ubuntu@"$PUBLIC_IP" "cat > ~/queue/${JOB_ID}.job" <<EOF
 TASK_TYPE=$TASK_TYPE
 MODEL=$MODEL
 LANGUAGE=$LANGUAGE

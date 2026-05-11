@@ -22,7 +22,7 @@ if $USE_ONDEMAND; then
     --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=gpu-runner},{Key=ManagedBy,Value=gpu-task}]' \
     --query 'Instances[0].InstanceId' \
     --output text \
-    --region "$AWS_REGION")
+    --region "$AWS_REGION" | tr -d "\r")
 else
   echo "[launch] Requesting spot instance ($INSTANCE_TYPE, AMI: $AMI)..." >&2
   INSTANCE_ID=$(aws ec2 run-instances \
@@ -41,7 +41,7 @@ else
     --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=gpu-runner},{Key=ManagedBy,Value=gpu-task}]' \
     --query 'Instances[0].InstanceId' \
     --output text \
-    --region "$AWS_REGION")
+    --region "$AWS_REGION" | tr -d "\r")
 fi
 
 echo "[launch] Instance $INSTANCE_ID starting..." >&2
@@ -54,7 +54,7 @@ PUBLIC_IP=$(aws ec2 describe-instances \
   --instance-ids "$INSTANCE_ID" \
   --query 'Reservations[0].Instances[0].PublicIpAddress' \
   --output text \
-  --region "$AWS_REGION")
+  --region "$AWS_REGION" | tr -d "\r")
 
 echo "[launch] Instance running at $PUBLIC_IP" >&2
 
@@ -64,6 +64,9 @@ for i in $(seq 1 30); do
   if ssh -o StrictHostKeyChecking=no \
          -o ConnectTimeout=5 \
          -o BatchMode=yes \
+         -p "${SSH_PORT:-22}" \
+         -p "${SSH_PORT:-22}" \
+         -p "${SSH_PORT:-22}" \
          -i "$KEY_PATH" \
          ubuntu@"$PUBLIC_IP" "echo ok" >/dev/null 2>&1; then
     echo "[launch] SSH ready." >&2
