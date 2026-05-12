@@ -790,6 +790,7 @@ For GEANNULEERD invoices the menu **incorrectly still shows all 7** including An
 | 363 | **CRITICAL** | Even retrieving a valid verify-email link via Proton inbox + visiting the URL while logged in + clicking GA VERDER does NOT clear the account-blocked state. Page redirects back to the block screen. Together with #320, this means a customer hitting the unverified-email auto-block is fully stranded — admin DB fix required. |
 | 365 | **HIGH** | `events.create` silently hangs under rapid repeat use — same pattern as #310 `invoices.mail`. DDP frame sent, no `result` reply, treatment `usedSessions` stays 0, callback returns `{err:null, res:undefined}` — caller can't distinguish from success. Regression #401 hit this after creating 3 fresh patients on an already-active account. |
 | — | INFO | Halingo throttles new `/register` signups from a single IP after a few successes (submit fires zero DDP, no mail). Workaround: rotate IP or reuse verified accounts. |
+| 420 | **HIGH** | WIJZIG WACHTWOORD button on /user/profile is dead — same shape as #320. Mouse-click on its bbox fires zero handlers, no password modal, no DDP. WIJZIG E-MAILADRES right next to it works fine despite sharing identical Halingo class names. Users cannot change their password through the UI. |
 
 ### Image uploads (avatar + logo) — they DO exist, click the placeholder image
 
