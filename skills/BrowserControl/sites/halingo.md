@@ -791,6 +791,7 @@ For GEANNULEERD invoices the menu **incorrectly still shows all 7** including An
 | 365 | **HIGH** | `events.create` silently hangs under rapid repeat use — same pattern as #310 `invoices.mail`. DDP frame sent, no `result` reply, treatment `usedSessions` stays 0, callback returns `{err:null, res:undefined}` — caller can't distinguish from success. Regression #401 hit this after creating 3 fresh patients on an already-active account. |
 | — | INFO | Halingo throttles new `/register` signups from a single IP after a few successes (submit fires zero DDP, no mail). Workaround: rotate IP or reuse verified accounts. |
 | 420 | **HIGH** | WIJZIG WACHTWOORD button on /user/profile is dead — same shape as #320. Mouse-click on its bbox fires zero handlers, no password modal, no DDP. WIJZIG E-MAILADRES right next to it works fine despite sharing identical Halingo class names. Users cannot change their password through the UI. |
+| 430 | MEDIUM | Patient VERWIJDER → JA confirm fires nothing. Click JA on the "Verwijderen" modal → no DDP, no record removed. Modal closes silently. Same silent-fail-open family. Likely guarded-block (patient has events/invoices) without an error UX. |
 
 ### Image uploads (avatar + logo) — they DO exist, click the placeholder image
 
