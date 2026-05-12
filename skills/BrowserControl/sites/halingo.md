@@ -791,6 +791,37 @@ For GEANNULEERD invoices the menu **incorrectly still shows all 7** including An
 | 365 | **HIGH** | `events.create` silently hangs under rapid repeat use — same pattern as #310 `invoices.mail`. DDP frame sent, no `result` reply, treatment `usedSessions` stays 0, callback returns `{err:null, res:undefined}` — caller can't distinguish from success. Regression #401 hit this after creating 3 fresh patients on an already-active account. |
 | — | INFO | Halingo throttles new `/register` signups from a single IP after a few successes (submit fires zero DDP, no mail). Workaround: rotate IP or reuse verified accounts. |
 
+### Image uploads (avatar + logo) — they DO exist, click the placeholder image
+
+Both profile picture and practice logo uploads are functional, contrary to earlier "feature gap" notes:
+
+- **User avatar** (`/user/profile`) — click the **circular** `.img-circle` placeholder (~150px wide). File picker opens, then a modal titled **"Afbeelding bijsnijden"** with a square crop overlay. Click **BIJSNIJDEN** to commit. Avatar persists across reload + shows in the top-right user pill.
+- **Practice logo** (`/practices` — NOT `/practices/settings`) — click the **square** placeholder image at top-left of the practice info card. Same cropper flow. Logo persists in the left-sidebar practice indicator + the practice header.
+
+```js
+const target = [...document.querySelectorAll('.img-circle, .img-square')].filter(e => e.offsetParent && e.getBoundingClientRect().width >= 80)[0];
+// click center of target → file picker → uploadFile → BIJSNIJDEN
+```
+
+The image is NOT stored in `Meteor.user().profile.avatar` or `practice.logo` directly — it's served via a different URL (avatars are likely uploaded to a CDN/asset store, referenced indirectly). `window.Meteor.connection._stores.avatars._getCollection()` is also empty even after a successful upload — so don't rely on Minimongo to verify; verify by reloading and screenshotting.
+
+### Aanspreking 7-option enumeration — click the dropdown ARROW
+
+Earlier notes said only 5 of 7 options surface. Wrong — clicking the dropdown ARROW (right edge of the react-select control, ~10px from the right) opens the full list. All 7 appear at once: **Meneer / Mevrouw / Mejuffrouw / Ouders van / dr. / Prof / ir.**
+
+```js
+const inp = document.getElementById('react-select-4-input');  // or whichever react-select-N has Aanspreking
+// find the control container's right edge:
+let n = inp; for (let i=0; i<6 && n; i++) { if ((n.className||'').toLowerCase().includes('control')) break; n = n.parentElement; }
+const r = (n || inp.parentElement).getBoundingClientRect();
+await page.mouse.click(Math.round(r.x + r.width - 12), Math.round(r.y + r.height/2));
+// Now options render as [id^="react-select-"][id*="-option-"]
+```
+
+### Bekijk sjabloon — Font Awesome eye icon
+
+The "Bekijk sjabloon" preview toggle is a `<i class="fa fa-eye">` Font Awesome icon at the bottom of each template card (at y ≈ 863 on a 1080-tall viewport with the section in view). NOT an SVG — that's why a generic SVG search misses it. Click toggles an expanded preview of the rendered invoice template inline.
+
 ### Verify-email URL patterns
 
 - Halingo sends verification mail with subject `Nieuw e-mailadres verifiëren` (NL) / `Vérifier la nouvelle adresse email` (FR).
