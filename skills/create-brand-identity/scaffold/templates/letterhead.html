@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Letterhead</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+<style>
+  /* Tokens — match brand-config.json */
+  :root {
+    --primary: #1B2A4A;
+    --accent: #D03C3C;
+    --off-white: #F5F5F0;
+    --white: #FFFFFF;
+    --gray-200: #EEEEE9;
+    --gray-600: #6E6E68;
+    --gray-800: #2C2C28;
+  }
+
+  * { box-sizing: border-box; }
+
+  @page { size: A4; margin: 0; }
+  @media print {
+    body { margin: 0; background: var(--white); }
+    .page { margin: 0; box-shadow: none; }
+    .no-print { display: none !important; }
+  }
+
+  body {
+    background: var(--off-white);
+    margin: 0;
+    padding: 24px;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 0 auto;
+    padding: 40mm 25mm 40mm 25mm;
+    background: var(--white);
+    position: relative;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.1);
+  }
+
+  /* 3mm primary stripe along the left edge */
+  .stripe {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3mm;
+    background: var(--primary);
+  }
+
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 60px;
+  }
+  .header .wm { width: 160px; }
+  .header .wm img, .header .wm svg { width: 100%; height: auto; display: block; }
+  .header .meta {
+    text-align: right;
+    font-size: 11px;
+    color: var(--gray-600);
+    line-height: 1.6;
+  }
+
+  .body {
+    min-height: 540px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--gray-800);
+    outline: none;
+  }
+  .body p { margin: 0 0 1em; }
+
+  .footer {
+    position: absolute;
+    bottom: 25mm;
+    left: 25mm;
+    right: 25mm;
+    border-top: 1px solid var(--gray-200);
+    padding-top: 12px;
+    font-size: 10px;
+    color: var(--gray-600);
+    text-align: center;
+    letter-spacing: 0.03em;
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="stripe"></div>
+
+  <div class="header">
+    <div class="wm">
+      <!-- Replace with the outlined wordmark — use a relative path to logos/ from this template -->
+      <img src="../05-Assets/logos/autopilot-wordmark-primary-outlined.svg" alt="Autopilot.">
+    </div>
+    <div class="meta">
+      Autopilot Pte. Ltd.<br>
+      160 Robinson Road<br>
+      Singapore<br>
+      autopilot.sg
+    </div>
+  </div>
+
+  <div class="body" contenteditable="true">
+    <p>[Date]</p>
+    <p>[Recipient name]<br>[Recipient title]<br>[Recipient address]</p>
+    <p>Dear [Name],</p>
+    <p>[Letter body. Click anywhere in this body section to start typing — the area is contenteditable. Print or save as PDF when complete.]</p>
+    <p>Yours sincerely,</p>
+    <p>[Your name]<br>[Your title]</p>
+  </div>
+
+  <div class="footer">
+    Autopilot Pte. Ltd. &middot; 160 Robinson Road &middot; Singapore &middot; autopilot.sg
+  </div>
+</div>
+
+</body>
+</html>

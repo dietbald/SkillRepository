@@ -1,0 +1,16 @@
+{
+  "name": "brand-asset-pipeline",
+  "version": "1.0.0",
+  "description": "Brand asset pipeline scaffold. Generates outlined SVGs, PNG exports, OG card, and PDF brand book from a single brand-config.json. Adapted from Autopilot Pte. Ltd. brand identity.",
+  "private": true,
+  "scripts": {
+    "outline": "node outline-logos.js",
+    "og": "node generate-og-image.js",
+    "pdf": "node generate-pdf.js",
+    "build": "node outline-logos.js && node generate-og-image.js && node generate-pdf.js"
+  },
+  "dependencies": {
+    "opentype.js": "^1.3.4",
+    "puppeteer": "^21.0.0"
+  }
+}

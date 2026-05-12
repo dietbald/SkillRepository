@@ -49,6 +49,7 @@ Claude will handle the clone, junction/symlink, and command copy automatically, 
 | `ollama-runner.md` | Local Ollama model runner. |
 | `uncodixfy.md` | Prevent generic AI/Codex **UI** aesthetics in frontend code (gradients, glassmorphism, oversized rounded corners, eyebrow labels, etc.). Visual, not prose. |
 | `humanizer` | Remove signs of AI-generated **prose** (em-dashes, copula avoidance, -ing depth-faking, tricolons, knowledge-cutoff hedges, sycophancy, etc.). Three modes: humanize a passage, audit a multi-page corpus / site, or voice-match against a writing sample. Adapted from [blader/humanizer](https://github.com/blader/humanizer) (MIT) + Wikipedia's "Signs of AI writing". |
+| `create-brand-identity` | Build a complete brand identity for a company from scratch. 7 phases: discovery (personas + positioning) → voice spec → visual system (colour/type/logo iterated v1→vN) → brand-book HTML (19 sections) → asset pipeline (dual-track SVGs, PNGs, OG card, PDF) → templates (email sig, letterhead, deck cover) → LLM-council ratification before lock. Includes parameterised scaffold scripts (opentype.js outliner, Puppeteer PDF/PNG generators) driven by a single `brand-config.json`. Codified from the Autopilot Pte. Ltd. brand work (4 review rounds, 7 logo iterations, council-locked at v7). |
 
 ### Commands (`commands/`)
 

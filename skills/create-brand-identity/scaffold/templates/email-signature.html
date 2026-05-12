@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Email Signature Template</title>
+<style>
+  body { margin: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  .preview-frame { background: #FFFFFF; border: 1px solid #E5E5E5; padding: 24px; max-width: 600px; }
+  .instructions { background: #F5F5F0; border-left: 3px solid #1B2A4A; padding: 16px 20px; margin: 20px 0; font-size: 14px; line-height: 1.6; color: #2C2C28; max-width: 600px; }
+  .instructions h3 { margin: 0 0 8px; font-size: 14px; }
+  .copy-block { background: #2C2C28; color: #F5F5F0; padding: 16px; font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', monospace; font-size: 12px; line-height: 1.5; overflow-x: auto; white-space: pre-wrap; max-width: 800px; border-radius: 4px; }
+  hr { border: none; border-top: 1px dashed #B5B5AE; margin: 32px 0; }
+</style>
+</head>
+<body>
+
+<div class="instructions">
+  <h3>How to install this signature</h3>
+  <p><strong>Gmail:</strong> Settings → See all settings → General → Signature → Create new → paste the rendered preview below (use Ctrl/Cmd+A to select all in the preview frame, then Ctrl/Cmd+C). Save changes.</p>
+  <p><strong>Outlook (desktop):</strong> File → Options → Mail → Signatures → New → paste rendered preview.</p>
+  <p><strong>Apple Mail:</strong> Mail → Preferences → Signatures → "+" → paste rendered preview. Uncheck "Always match my default message font."</p>
+  <p>Replace <code>{{NAME}}</code>, <code>{{TITLE}}</code>, <code>{{EMAIL}}</code> with your details before pasting.</p>
+</div>
+
+<h3>Rendered preview (copy this)</h3>
+<div class="preview-frame">
+
+<table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse: collapse; font-family: Georgia, 'Times New Roman', serif;">
+  <tr>
+    <td style="padding-right: 24px; border-right: 2px solid #1B2A4A; vertical-align: middle;">
+      <!-- Replace with the outlined wordmark from logos/ — referenced as an absolute URL to your CDN for email reliability -->
+      <img src="https://yourcdn.example.com/autopilot-wordmark-primary-outlined.png" width="200" height="30" alt="Autopilot." style="display: block; border: 0;">
+    </td>
+    <td style="padding-left: 24px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.5; color: #2C2C28; vertical-align: middle;">
+      <div style="font-weight: bold; font-size: 16px; color: #1B2A4A; mso-line-height-rule: exactly;">{{NAME}}</div>
+      <div style="color: #6E6E68; mso-line-height-rule: exactly;">{{TITLE}}</div>
+      <div style="margin-top: 8px;">
+        <a href="mailto:{{EMAIL}}" style="color: #1B2A4A; text-decoration: none;">{{EMAIL}}</a>
+      </div>
+      <div style="color: #6E6E68;">autopilot.sg</div>
+    </td>
+  </tr>
+</table>
+
+</div>
+
+<hr>
+
+<h3>Raw HTML (alternative paste source)</h3>
+<div class="copy-block">&lt;table cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; role=&quot;presentation&quot; style=&quot;border-collapse: collapse; font-family: Georgia, 'Times New Roman', serif;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td style=&quot;padding-right: 24px; border-right: 2px solid #1B2A4A; vertical-align: middle;&quot;&gt;
+      &lt;img src=&quot;https://yourcdn.example.com/autopilot-wordmark-primary-outlined.png&quot; width=&quot;200&quot; height=&quot;30&quot; alt=&quot;Autopilot.&quot; style=&quot;display: block; border: 0;&quot;&gt;
+    &lt;/td&gt;
+    &lt;td style=&quot;padding-left: 24px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.5; color: #2C2C28; vertical-align: middle;&quot;&gt;
+      &lt;div style=&quot;font-weight: bold; font-size: 16px; color: #1B2A4A;&quot;&gt;{{NAME}}&lt;/div&gt;
+      &lt;div style=&quot;color: #6E6E68;&quot;&gt;{{TITLE}}&lt;/div&gt;
+      &lt;div style=&quot;margin-top: 8px;&quot;&gt;
+        &lt;a href=&quot;mailto:{{EMAIL}}&quot; style=&quot;color: #1B2A4A; text-decoration: none;&quot;&gt;{{EMAIL}}&lt;/a&gt;
+      &lt;/div&gt;
+      &lt;div style=&quot;color: #6E6E68;&quot;&gt;autopilot.sg&lt;/div&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;</div>
+
+</body>
+</html>

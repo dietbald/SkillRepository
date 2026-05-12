@@ -1,0 +1,103 @@
+{
+  "_comment": "Single source of truth for the asset pipeline. All generator scripts read from this file. Copy to brand-config.json and edit per client. Do not hardcode any of these values in the generator scripts.",
+
+  "company": {
+    "name": "Autopilot",
+    "legalName": "Autopilot Pte. Ltd.",
+    "domain": "autopilot.sg",
+    "tagline": "Your business should run without you.",
+    "_comment": "name is used in wordmark text + ARIA labels. legalName goes in footers and PDF metadata. domain is the canonical web URL. tagline is the public-facing one-liner."
+  },
+
+  "colours": {
+    "primary": "#1B2A4A",
+    "accent": "#D03C3C",
+    "offWhite": "#F5F5F0",
+    "white": "#FFFFFF",
+    "grays": {
+      "100": "#FAFAF8",
+      "200": "#EEEEE9",
+      "400": "#B5B5AE",
+      "600": "#6E6E68",
+      "800": "#2C2C28"
+    },
+    "_comment": "primary is the dominant brand colour (backgrounds, headings, structure). accent is the device colour (CTAs, periods, marks — sparingly). offWhite is the warm background. grays are the neutral scale."
+  },
+
+  "typography": {
+    "heading": {
+      "family": "Playfair Display",
+      "fallback": "Georgia, 'Times New Roman', serif",
+      "weights": [700],
+      "googleFontsUrl": "https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap"
+    },
+    "body": {
+      "family": "Inter",
+      "fallback": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+      "weights": [300, 400, 500, 600],
+      "googleFontsUrl": "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap"
+    }
+  },
+
+  "wordmark": {
+    "fontFile": "PlayfairDisplay-Bold.ttf",
+    "fontFamily": "Playfair Display",
+    "fontWeight": 700,
+    "fontSize": 56,
+    "yBaseline": 48,
+    "viewBoxHeight": 68,
+    "viewBoxWidthWithPeriod": 450,
+    "viewBoxWidthNoPeriod": 430,
+    "leftPad": 2,
+    "letters": [
+      { "char": "A", "dx": 0 },
+      { "char": "u", "dx": -2 },
+      { "char": "t", "dx": -0.5 },
+      { "char": "o", "dx": -0.5 },
+      { "char": "p", "dx": -0.8 },
+      { "char": "i", "dx": -0.3 },
+      { "char": "l", "dx": -0.3 },
+      { "char": "o", "dx": -0.5 },
+      { "char": "t", "dx": -0.8 }
+    ],
+    "period": {
+      "cx": 437,
+      "cy": 48,
+      "radius": 5.5,
+      "_comment": "cx/cy are the design-intent coordinates of the period centre in the text-based SVG. The outliner places the <circle> at these coordinates (NOT inside the scaled group)."
+    },
+    "targetTextEndX": 427,
+    "_comment_targetTextEndX": "Where the text visually ends in the text-based SVG. opentype.js produces narrower native metrics; the outliner calculates scaleFactor = targetTextEndX / nativeTextEndX and wraps the path in <g transform='scale(S)'>."
+  },
+
+  "brandBookFile": "../04-BrandBook/brand-book.html",
+
+  "outputs": {
+    "logosDir": "logos",
+    "pdfName": "Autopilot-Brand-Identity.pdf",
+    "ogCardName": "logos/autopilot-og-card.png",
+    "filenamePrefix": "autopilot",
+    "_comment": "filenamePrefix is the slug used in all asset filenames (autopilot-wordmark-navy.svg, autopilot-monogram-navy-bg.png, etc.). Lowercase, hyphenated."
+  },
+
+  "ogCard": {
+    "width": 1200,
+    "height": 630,
+    "templateFile": "og-image-template.html",
+    "wordmarkVariant": "white-outlined",
+    "manifestoLine": "Your business should run without you."
+  },
+
+  "pdfExport": {
+    "viewport": { "width": 800, "height": 1100, "deviceScaleFactor": 2 },
+    "scale": 0.88,
+    "margin": "10mm",
+    "fontLoadTimeoutMs": 2000,
+    "_comment": "Don't change scale or viewport without re-testing the PDF. 800px viewport at 0.88 scale fits A4 with 10mm margins. Other combinations clip or leave white space."
+  },
+
+  "locked": false,
+  "lockDate": null,
+  "reviewWindowMonths": 12,
+  "_comment_locked": "Set locked: true after council ratification. lockDate is YYYY-MM-DD. reviewWindowMonths defaults to 12; longer for established brands, shorter for experimental."
+}

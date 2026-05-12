@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OG Image</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<style>
+  /* Edit colours/font to match brand-config.json values, or load them via inline @font-face. */
+  :root {
+    --primary: #1B2A4A;
+    --accent: #D03C3C;
+    --off-white: #F5F5F0;
+    --white: #FFFFFF;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--primary); }
+
+  .og {
+    width: 1200px;
+    height: 630px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 80px;
+    background: var(--primary);
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+
+  .og .wm {
+    width: 600px;
+    margin-bottom: 60px;
+  }
+  .og .wm svg {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  .og .manifesto {
+    color: var(--off-white);
+    font-size: 36px;
+    line-height: 1.3;
+    text-align: center;
+    font-weight: 400;
+    max-width: 900px;
+  }
+  .og .manifesto .accent {
+    color: var(--accent);
+  }
+</style>
+</head>
+<body>
+  <div class="og">
+    <div class="wm">
+      <!-- Paste the outlined white wordmark SVG inline here, OR use an <img> tag pointing to logos/{prefix}-wordmark-white-outlined.svg -->
+      <img src="logos/autopilot-wordmark-white-outlined.svg" alt="Autopilot.">
+    </div>
+    <div class="manifesto">Your business should run without you<span class="accent">.</span></div>
+  </div>
+</body>
+</html>
