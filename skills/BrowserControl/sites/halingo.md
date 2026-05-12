@@ -789,6 +789,21 @@ For GEANNULEERD invoices the menu **incorrectly still shows all 7** including An
 | 320 | **CRITICAL** | Block-screen recovery button DEAD in both NL and FR locales — `Stuur validatie e-mail` / `Envoyer un email de validation` fires zero DDP, zero HTTP, no UI change. Customer hitting auto-block has no in-app recovery. |
 | 363 | **CRITICAL** | Even retrieving a valid verify-email link via Proton inbox + visiting the URL while logged in + clicking GA VERDER does NOT clear the account-blocked state. Page redirects back to the block screen. Together with #320, this means a customer hitting the unverified-email auto-block is fully stranded — admin DB fix required. |
 
+### Verify-email URL patterns
+
+- Halingo sends verification mail with subject `Nieuw e-mailadres verifiëren` (NL) / `Vérifier la nouvelle adresse email` (FR).
+- All outbound links are wrapped in **AWS SES tracking redirect**: `https://zyhwcnl.r.eu-west-3.awstrack.me/L0/<urlencoded-direct>/...`. The wrapper is **single-use** — second visit returns HTTP 400.
+- Always extract the **direct URL** from inside the wrapper: regex `(https:%2F%2Fdev\.app\.halingo\.be%2Fverify-email%2F[^%]+%3Flocale=[a-z]+)` then `decodeURIComponent()`.
+- Each "Stuur validatie e-mail" trigger sends a NEW mail with a NEW token. Older tokens may or may not still be valid; always pick the most recent thread message.
+- The verify URL only works if the user is logged in to Halingo. Visiting while logged-out lands on `AANMELDEN`. Visiting while logged-in as the same user shows `Momenteel ingelogd als: <name>` + `GA VERDER` + `LOG UIT`.
+- **CAVEAT (defect #363)**: clicking GA VERDER on a blocked account does NOT unblock — the verify succeeds but the block flag stays. Don't rely on this flow to recover blocked accounts.
+
+### Proton inbox helper for Liam/Marcus
+
+When the verify mail goes to `*@proton.me` (Liam, Marcus), log into Proton via `account.proton.me/login` → navigate to `mail.proton.me`, dismiss the onboarding gauntlet (see `sites/proton.md`), match the email row by subject `Nieuw e-mailadres verifiëren` (not just sender "Halingo" — there will be multiple Halingo emails), open it, then extract the link from the `about:blank` iframe (NOT the `mail.proton.me/...` chrome frame, which only has mailto links).
+
+For fresh test accounts using Mailinator, poll the public API: `https://api.mailinator.com/api/v2/domains/public/inboxes/<local-part>` returns `{msgs}`, then `/messages/<id>` returns the full body. The message body's `href` values are JSON-escaped (`\/`) — match against the escaped form first.
+
 ### Session 4 addenda (2026-05-12) — fresh-account onboarding, full chain proofs
 
 - **Fresh signup → verification → full test-bed bootstrap** in `_fresh_account.json`. The flow `/register` → auto-login → poll Mailinator for "Nieuw e-mailadres verifiëren" → visit direct `/verify-email/<token>` link (not the awstrack.me wrapper, which 400s on second use) → click `GA VERDER` → badge cleared. Saved to `~/.claude/projects/.../memory/halingo_fresh_account_setup.md`.

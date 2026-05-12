@@ -373,6 +373,17 @@ Why `mouse.click()` and not `dispatchEvent` here: `dispatchEvent` fires on the e
 
 **When in doubt:** try `mouse.click()` first. If it does nothing, try `dispatchEvent`.
 
+**SVG elements have no `.click()` method.** Calling `svg.click()` from `page.evaluate(() => svg.click())` throws `TypeError: chevron.click is not a function`. Walk up to the nearest `<button>` ancestor and click that:
+
+```js
+const lbl = [...document.querySelectorAll('*')].find(/* ... */);
+const row = lbl.closest('div').parentElement.parentElement;
+const btn = [...row.querySelectorAll('button')].slice(-1)[0];  // the chevron <button> wrapping the SVG
+if (btn) btn.click();
+```
+
+**React-controlled checkboxes need `page.mouse.click(x, y)` on the bounding-box, not JS `.click()`.** JS `.click()` toggles the visible checkmark but React's internal `checked` state stays stale, and the form submit sees the checkbox as unticked. Sites where this matters: ToS-acceptance checkboxes, "Aanvangsbilan" type checkboxes on Halingo. The same applies to radio inputs inside tiles.
+
 ### jQuery `data-function` buttons — use jQuery trigger, not a direct click
 
 Some sites (TMDB, older jQuery-based SPAs) wire button clicks via delegated jQuery handlers: `$('[data-function="openConfirmDialog()"]').on('click', ...)`. Neither `page.mouse.click()` nor `dispatchEvent('click')` fires these — the jQuery listener never sees the event.
@@ -1416,6 +1427,154 @@ const numbers = [...document.querySelectorAll('input')]
 ```
 
 Why this works: React-controlled inputs always have their current value in `.value`, and the rendered order matches the visual layout. For pages with N numeric fields in known visual order, indexing into the result array is reliable. Verified on Halingo treatment view (cap, used-count, halingo-count).
+
+### `page.mouse.move(x, y, {steps: N})` can throw CDP `BINDINGS: double value expected at position 58`
+
+Some puppeteer-core versions reject the `{steps: N}` option on `Mouse.move()` mid-drag with a CDP encoding error. Symptom: error is thrown on the second `mouse.move()` call during a drag (mouse.down → mouse.move{steps} fails).
+
+**Workaround** — replace with an explicit manual loop of single-step moves:
+
+```js
+// ❌ Sometimes fails on multi-step move
+await page.mouse.move(x + 200, y, { steps: 10 });
+// ✅ Always works
+for (let i = 1; i <= 10; i++) await page.mouse.move(x + i * 20, y);
+```
+
+If the issue persists even with manual loops, the underlying drag-and-drop library may need Playwright instead of Puppeteer (react-big-calendar DnD was the case we hit).
+
+### Label-walk-up: stop at single-input wrappers + null-check parentElement
+
+Material UI lays out forms as nested `<div>`s where one `<label>` and one `<input>` share a wrapper, but several wrappers sit inside a Grid row. The naive `lbl.closest('div').parentElement.querySelector('input')` returns the FIRST input in the whole row, NOT the labelled one — silently corrupting the wrong field (we corrupted a patient's Voornaam this way before noticing).
+
+```js
+const lbl = [...document.querySelectorAll('label')].find(e => e.offsetParent && /^Voornaam$/i.test((e.innerText||'').trim()));
+let w = lbl.parentElement;
+let inp = w && w.querySelector('input');
+// Walk up until the wrapper contains EXACTLY one input
+while (inp && w && w.querySelectorAll('input').length > 1) {
+  w = w.parentElement;
+  if (!w) { inp = null; break; }   // null-check — parentElement chain hits document root
+  inp = w.querySelector('input');
+}
+if (!inp) return false;
+```
+
+If a field has no `<label>` element at all (Adres/Postcode/Plaats in Halingo's forms), fall back to placeholder matching:
+
+```js
+const inp = [...document.querySelectorAll('input')].find(e => e.offsetParent && (e.placeholder||'') === 'Postcode');
+```
+
+### `scrollIntoView()` before clicking off-screen elements
+
+`getBoundingClientRect()` returns rectangles relative to the viewport — for elements below the fold the `y` is way outside the viewport (e.g. `y=1017` with `innerHeight=945`). `page.mouse.click(x, 1017)` clicks empty space below the rendered area.
+
+Always scroll the target into view first:
+
+```js
+await page.evaluate(() => {
+  const lbl = [...document.querySelectorAll('*')].find(e => /^Ziekenfonds$/.test((e.innerText||'').trim()) && e.children.length === 0);
+  if (lbl) lbl.scrollIntoView({ block: 'center' });
+});
+await sleep(1500);
+// NOW getBoundingClientRect() returns viewport-relative coords that mouse.click can hit
+```
+
+### SPA "route not found" returns HTTP 200 with an error string in the body
+
+Single-page apps with client-side routing usually do NOT return HTTP 404 for unknown paths — the server returns the HTML shell with status 200, and the router renders an error message in the page body. Don't rely on `response.status()` to detect missing routes.
+
+```js
+// ❌ Won't catch SPA 404s
+const status = (await page.goto(url)).status();   // 200 — useless
+
+// ✅ Match the localised error string
+const notFound = await page.evaluate(() =>
+  /De gevraagde pagina bestaat niet|This page can.t be found|404/i.test(document.body.innerText)
+);
+```
+
+Add the site's specific error string to its site recipe — they vary (NL: "De gevraagde pagina bestaat niet", FR: "Cette page n'existe pas", EN: "Page not found").
+
+### Re-login defensively at script start — sessions die between runs
+
+Long-running sites (Wicket, Meteor, OAuth-bearer apps) drop the session at unpredictable times. If your script does `connect() + login()` and `login()` skips the form when not on `/login`, a stale session lets you proceed onto a page that looks logged-in but actually 401s every action.
+
+Guard pattern:
+
+```js
+await page.goto('https://target.example/', { waitUntil: 'domcontentloaded' });
+await sleep(4000);
+if (await page.evaluate(() => !!document.querySelector('input[name=email]'))) {
+  await login(page, 'liam');
+  await sleep(3000);
+}
+```
+
+Cheaper than discovering 10 steps later that the kebab menu silently rendered nothing because you're not actually logged in.
+
+### Email-verification flows — extract direct URL from AWS SES tracking wrapper
+
+Emails sent via Amazon SES wrap every outbound link in a tracking redirect (`https://<id>.r.eu-west-3.awstrack.me/L0/<url-encoded-direct-url>/...`). These wrappers are **single-use**: the first visit redirects to the real URL, subsequent visits return HTTP 400. If your test re-runs (or you re-process the same Mailinator message), the wrapper is already burnt.
+
+Extract the direct URL from inside the wrapper:
+
+```js
+const m = wrapper.match(/(https:%2F%2F<your-domain>%2F[^%]+%3F[^/]+)/);
+const direct = m && decodeURIComponent(m[1]);
+```
+
+Mailinator's JSON API returns the message body with JSON-escaped slashes (`\/`). Match the escaped form, then unescape:
+
+```js
+const direct = body.match(/https:\\\/\\\/dev\.example\.be\\\/verify-email\\\/[A-Za-z0-9_-]+\?locale=[a-z]+/);
+const url = direct && direct[0].replace(/\\\//g, '/');
+```
+
+### Subscription-driven content — poll for the actual data, not the page chrome
+
+Meteor/Firebase/GraphQL-subscription apps frequently render the page skeleton in ~1 s but the live data lands 5-15 s later when the subscription fires. Polling for the section header ("Selecteer plan") matches too early and your click hits a not-yet-populated tile.
+
+Poll for the actual data instead:
+
+```js
+// ❌ Matches the header before tiles render
+await waitFor(page, () => /Selecteer plan/i.test(document.body.innerText));
+
+// ✅ Matches the actual tile content
+await waitFor(page, () => /Basis[\s\S]{0,60}Kies/i.test(document.body.innerText)
+                       && /Standaard[\s\S]{0,60}Kies/i.test(document.body.innerText)
+                       && /Premium[\s\S]{0,60}Kies/i.test(document.body.innerText), 60000);
+```
+
+### Meteor apps — read state from Minimongo, don't parse DDP frames
+
+If the site is a Meteor app (has `window.Meteor.connection`), you can read every subscribed collection directly:
+
+```js
+const docs = await page.evaluate(() => {
+  const stores = window.Meteor.connection._stores;
+  // _docs._map is older Meteor; _getCollection().find().fetch() works on current Meteor
+  return stores.patientFiles._getCollection().find().fetch();
+});
+```
+
+This beats DDP-frame regex extraction (which is fragile, requires capture-before-action timing, and misses replies that arrived before the listener attached). All collections currently subscribed by the page are accessible: `Object.keys(window.Meteor.connection._stores)`.
+
+To confirm the action you just triggered actually wrote server-side, poll the relevant collection after the click and check for the new doc — far more reliable than waiting for a `"msg":"result"` frame.
+
+### DDP/WebSocket capture must be attached BEFORE the trigger
+
+`page.target().createCDPSession() + Network.enable + on('Network.webSocketFrame*')` listeners only see frames sent after they attach. If you do:
+
+```js
+// ❌ Wrong order
+await page.evaluate(() => buttonClick());   // method fires, response arrives
+const ddp = []; await client.send('Network.enable'); /* ... */  // attaches too late
+```
+
+…you'll see 0 frames captured and conclude the action didn't fire — when in fact it did and you missed it. Always attach the CDP listener BEFORE the action, or read state via Minimongo (above) to confirm side-effect.
 
 ### Extracting IDs from DDP/WebSocket frames — capture wide slices
 
