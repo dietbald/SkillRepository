@@ -788,6 +788,8 @@ For GEANNULEERD invoices the menu **incorrectly still shows all 7** including An
 | 319 | HIGH | Unverified-email auto-block after ~3 days. Escalation of #249. Liam blocked 2026-05-11, Marcus blocked 2026-05-12. |
 | 320 | **CRITICAL** | Block-screen recovery button DEAD in both NL and FR locales — `Stuur validatie e-mail` / `Envoyer un email de validation` fires zero DDP, zero HTTP, no UI change. Customer hitting auto-block has no in-app recovery. |
 | 363 | **CRITICAL** | Even retrieving a valid verify-email link via Proton inbox + visiting the URL while logged in + clicking GA VERDER does NOT clear the account-blocked state. Page redirects back to the block screen. Together with #320, this means a customer hitting the unverified-email auto-block is fully stranded — admin DB fix required. |
+| 365 | **HIGH** | `events.create` silently hangs under rapid repeat use — same pattern as #310 `invoices.mail`. DDP frame sent, no `result` reply, treatment `usedSessions` stays 0, callback returns `{err:null, res:undefined}` — caller can't distinguish from success. Regression #401 hit this after creating 3 fresh patients on an already-active account. |
+| — | INFO | Halingo throttles new `/register` signups from a single IP after a few successes (submit fires zero DDP, no mail). Workaround: rotate IP or reuse verified accounts. |
 
 ### Verify-email URL patterns
 
