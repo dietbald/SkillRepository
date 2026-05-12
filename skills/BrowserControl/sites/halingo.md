@@ -787,6 +787,7 @@ For GEANNULEERD invoices the menu **incorrectly still shows all 7** including An
 | 317 | HIGH | Pathology session cap NOT enforced server-side. `events.create` accepted 195 events at §2b.2 treatment (cap 190) without rejection. Regulatory: should block at the cap. |
 | 319 | HIGH | Unverified-email auto-block after ~3 days. Escalation of #249. Liam blocked 2026-05-11, Marcus blocked 2026-05-12. |
 | 320 | **CRITICAL** | Block-screen recovery button DEAD in both NL and FR locales — `Stuur validatie e-mail` / `Envoyer un email de validation` fires zero DDP, zero HTTP, no UI change. Customer hitting auto-block has no in-app recovery. |
+| 363 | **CRITICAL** | Even retrieving a valid verify-email link via Proton inbox + visiting the URL while logged in + clicking GA VERDER does NOT clear the account-blocked state. Page redirects back to the block screen. Together with #320, this means a customer hitting the unverified-email auto-block is fully stranded — admin DB fix required. |
 
 ### Session 4 addenda (2026-05-12) — fresh-account onboarding, full chain proofs
 
