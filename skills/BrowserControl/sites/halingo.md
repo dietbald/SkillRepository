@@ -771,7 +771,7 @@ Earlier recipe mentions "5 actions on row icons" loosely; the kebab (⋮) on eac
 
 For GEANNULEERD invoices the menu **incorrectly still shows all 7** including Annuleer + Reken administratiekost (defect #225). Verstuur via mail + Herinnering via mail both inherit the `invoices.mail` hang defect (#310).
 
-### Active defect catalog (as of 2026-05-11 evening)
+### Active defect catalog (as of 2026-05-12)
 
 | # | Sev | Defect |
 |---|---|---|
@@ -784,3 +784,20 @@ For GEANNULEERD invoices the menu **incorrectly still shows all 7** including An
 | 226 | HIGH | INSZ `99.99.99-999.99` accepted (no mod-97, no DOB check). |
 | 249 | HIGH | Signup auto-login without email verification ("Niet gevalideerd" persists). |
 | 310 | HIGH | `invoices.mail` DDP method hangs — no response in 25+ s, no mail delivered, no UI feedback. Tested with valid mail template assumed; needs retest after explicitly setting one at Praktijk → INSTELLINGEN. |
+| 317 | HIGH | Pathology session cap NOT enforced server-side. `events.create` accepted 195 events at §2b.2 treatment (cap 190) without rejection. Regulatory: should block at the cap. |
+| 319 | HIGH | Unverified-email auto-block after ~3 days. Escalation of #249. Liam blocked 2026-05-11, Marcus blocked 2026-05-12. |
+| 320 | **CRITICAL** | Block-screen recovery button DEAD in both NL and FR locales — `Stuur validatie e-mail` / `Envoyer un email de validation` fires zero DDP, zero HTTP, no UI change. Customer hitting auto-block has no in-app recovery. |
+
+### Session 4 addenda (2026-05-12) — fresh-account onboarding, full chain proofs
+
+- **Fresh signup → verification → full test-bed bootstrap** in `_fresh_account.json`. The flow `/register` → auto-login → poll Mailinator for "Nieuw e-mailadres verifiëren" → visit direct `/verify-email/<token>` link (not the awstrack.me wrapper, which 400s on second use) → click `GA VERDER` → badge cleared. Saved to `~/.claude/projects/.../memory/halingo_fresh_account_setup.md`.
+- **Three onboarding wizards documented end-to-end** (#327-#340): Practice create (3 steps), Patient add modal, Treatment add modal. See `halingo_wizard_recipes.md` memory. **§2b.3 cap = 140** sessions (earlier docs said 144 — RIZIV update).
+- **Bilan write+save resolved on second practice** (#340): gesture is type → Enter → Tab → blur → wait (no Opslaan needed). Persists across reload. See `halingo_bilan_save_gesture.md` memory.
+- **Events → invoice DDP chain proven** (#341-#349): `events.create` shape `{title, patientFileId, treatmentId, userId, start:Date, end:Date, type:1, meta:{type:1, subType:30, location:1}, practiceId, repeat:null, color:'#18a689'}`. Then `invoices.add.all.therapists({practiceId, eventIds})` returns `{success: N, errors: [...]}`. Failures: `incompleteUser` or `incompletePatientFile` until the required fields are filled. See `halingo_invoice_chain_recipe.md` memory.
+- **Ziekenfonds typeahead** (#350): scrollIntoView + 80px right of label + type "100" + click `(100) Landsbond der Christelijke Mutualiteiten` option from list. Saves `patient.healthInsurance = 100`.
+- **Invoice mededeling format**: `<PracticePrefix>-<YYYYMMDD>-<NNN>` (e.g. `UAT-20260512-001` where `UAT` = first 3 caps of practice name).
+- **Patient archive via DDP only** (#356): `patientFile.update({state: 'inactive'})` works. UI exposes only WACHTLIJST + VERWIJDER on the patient detail page; no Archiveer button. States: pending / active / inactive / waitlist.
+- **Aanspreking enumeration** (#355): 5 of 7 surfaced via 26-letter probe — Meneer / Mevrouw / Mejuffrouw / Ouders van / Prof. `dr.` and `ir.` did not surface — likely typeahead requires ≥2 chars for period-containing options.
+- **Practice settings store shape** (#358): `settings.invoices = {locale, template, type: 'member', mail: {template}}`, `settings.patientFiles.notifications = {date: 7, sessions: 10}`. Sjabloon factuur tile-click does not persist via DDP — needs explicit save.
+- **Schema additions** (#360): `practiceUsers = {userId, practiceId, role: 'owner'|'member', commission: {type: 'none'|...}}`. `subscriptions = {practiceId, trialEnd, start, periodStart/End, activeUntil, type: 'BASIC', paymentInfo: {type: 'none', repeatedAt: 'monthly'}}` — 30-day trial.
+- **Drag-resize/move events** — confirmed wired (`rbc-addons-dnd`) but Puppeteer CDP errors out on the multi-step mouse-move during DnD. Defer to manual verification or Playwright.
