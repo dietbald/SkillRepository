@@ -135,7 +135,19 @@ operations:
     name: Employee Birthday Reminder
     model: hr.employee
     code_file: birthday_action.py
+
+  - type: create_server_action            # example: server action with a UI button
+    xml_id: bicc_recruitment.resend_info_survey
+    name: Resend Info Survey
+    model: hr.applicant
+    code_file: resend_info_survey.py
+    binding_model: hr.applicant           # makes the action appear in the
+                                          # hr.applicant Action menu (the gear icon)
+    binding_view_types: "form,list"       # default behaviour varies by Odoo;
+                                          # set explicitly when you want both
 ```
+
+**On `binding_model`** — pass the model NAME (e.g. `hr.applicant`), not the numeric id. The handler resolves it. Without `binding_model`, the server action exists but recruiters have to run it via Settings → Technical → Server Actions → Run Manually. With it, the action shows up as a one-click button in the target model's UI. `binding_model` is usually the same as `model` (the action operates on records of its bound model), but they can differ.
 
 Operations apply **in order**. If one fails mid-deploy, CI automatically reverses every completed op — you will never see a half-applied state in the audit. The audit's `status` will be one of:
 
@@ -155,7 +167,7 @@ Operations apply **in order**. If one fails mid-deploy, CI automatically reverse
 | `update_view` | `ir.ui.view` | `key` *or* `xml_id`, `arch_file` | Multi-website Odoo: pass `website_id: false` (global) or `website_id: <int>` (specific site) if the key resolves ambiguously. |
 | `create_view` | `ir.ui.view` | `xml_id`, `arch_file` | Optional `inherit_id` (xml_id), `model`, `priority`. |
 | `create_field` | `ir.model.fields` | `xml_id`, `model`, `name`, `field_type` | Name MUST start with `x_` or `x_studio_`. Always uses `state='manual'`. |
-| `create_server_action` | `ir.actions.server` | `xml_id`, `model`, `code_file` | `state='code'`. Python body subject to safe_eval rules. |
+| `create_server_action` | `ir.actions.server` | `xml_id`, `model`, `code_file` | `state='code'`. Python body subject to safe_eval. Optional: `binding_model: <model>` to bind the action to a model's Action menu (button appears in `binding_model`'s form/list view), `binding_view_types: "form,list"`. |
 | `create_automated_action` | `base.automation` | `xml_id`, `model`, `trigger`, `code_file` | Odoo 17+ shape — handler creates a sibling `ir.actions.server` (xml_id `<id>__action`) automatically. |
 | `create_cron` | `ir.cron` | `xml_id`, `model`, `code_file`, `interval_number`, `interval_type` | `interval_type` ∈ `minutes/hours/days/weeks/months`. |
 | `create_menu` | `ir.ui.menu` | `xml_id`, `name` | Optional `parent_xml_id`, `action_xml_id`, `sequence`. |
