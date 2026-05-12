@@ -1514,23 +1514,37 @@ if (await page.evaluate(() => !!document.querySelector('input[name=email]'))) {
 
 Cheaper than discovering 10 steps later that the kebab menu silently rendered nothing because you're not actually logged in.
 
-### Email-verification flows — extract direct URL from AWS SES tracking wrapper
+### Email-verification flows — use the bundled `mailbox.js` helper
 
-Emails sent via Amazon SES wrap every outbound link in a tracking redirect (`https://<id>.r.eu-west-3.awstrack.me/L0/<url-encoded-direct-url>/...`). These wrappers are **single-use**: the first visit redirects to the real URL, subsequent visits return HTTP 400. If your test re-runs (or you re-process the same Mailinator message), the wrapper is already burnt.
-
-Extract the direct URL from inside the wrapper:
+`~/.claude/skills/BrowserControl/mailbox.js` handles throwaway-inbox creation, polling, and verification-link extraction. Default provider: **Mailinator** (free public inbox, no API key, no signup, auto-spins on first mail). 1secmail is supported as fallback but is paywalled at the moment.
 
 ```js
-const m = wrapper.match(/(https:%2F%2F<your-domain>%2F[^%]+%3F[^/]+)/);
-const direct = m && decodeURIComponent(m[1]);
+const { mkAddr, poll, getMessage, findVerifyLink } =
+  require(process.env.HOME + '/.claude/skills/BrowserControl/mailbox.js');
+
+const addr = mkAddr('signup-test');           // signup-test-<ts>@mailinator.com
+// ... trigger the action that sends mail to `addr`
+const res = await poll(addr, { timeoutMs: 90000, subjectMatch: /verify|confirm/i });
+if (!res.ok) throw new Error('no mail in 90s');
+const body = await getMessage(addr, res.msgs[0].id);
+const verifyUrl = findVerifyLink(body, /your-app\.example\.com/);   // already AWS-unwrapped
 ```
 
-Mailinator's JSON API returns the message body with JSON-escaped slashes (`\/`). Match the escaped form, then unescape:
+`findVerifyLink` handles two encoding traps automatically:
 
-```js
-const direct = body.match(/https:\\\/\\\/dev\.example\.be\\\/verify-email\\\/[A-Za-z0-9_-]+\?locale=[a-z]+/);
-const url = direct && direct[0].replace(/\\\//g, '/');
+- **AWS SES tracking wrappers** (`https://<id>.r.<region>.awstrack.me/L0/<url-encoded-direct>/...`) — Amazon wraps every outbound link with a redirect. **Single-use** — first visit redirects to the real URL, subsequent visits return HTTP 400. Always unwrap before navigating.
+- **Mailinator JSON-escaped slashes** — the API response embeds links with `\/` rather than `/`. Match the escaped form OR normalise first; `findVerifyLink` does the normalise.
+
+CLI mode for quick interactive inspection:
+
+```bash
+node ~/.claude/skills/BrowserControl/mailbox.js make signup-test    # mint an address
+node ~/.claude/skills/BrowserControl/mailbox.js poll <addr>         # list messages
+node ~/.claude/skills/BrowserControl/mailbox.js read <addr> <id>    # dump full body
+node ~/.claude/skills/BrowserControl/mailbox.js link <addr> <id> <domain-regex>   # extract verify link
 ```
+
+**Caveat**: Mailinator public inboxes are world-readable AND aged-out after ~24 h. Use only for ephemeral test mail. Never trust them for anything sensitive.
 
 ### Subscription-driven content — poll for the actual data, not the page chrome
 
