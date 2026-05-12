@@ -121,23 +121,25 @@ function unwrapAwsTrack(url) {
   try { return decodeURIComponent(m[1]); } catch { return url; }
 }
 
-// findVerifyLink scans a raw message body (HTML or JSON-escaped) for the first link matching a domain regex.
+// findVerifyLink scans a raw message body (HTML or JSON-escaped) for the first link matching a URL pattern.
+// Pass a URL regex like /dev\.app\.example\.com\/verify-email\//i (include the PATH, not just the domain —
+// otherwise asset URLs in CSS or image tags will match first).
+//
 // Handles JSON-escaped slashes (`\/`) from Mailinator's API and unwraps AWS SES tracking links.
 // Returns the direct URL string, or null.
-function findVerifyLink(body, domainRe) {
+function findVerifyLink(body, urlRe) {
   if (!body) return null;
-  if (!(domainRe instanceof RegExp)) domainRe = new RegExp(domainRe);
+  if (!(urlRe instanceof RegExp)) urlRe = new RegExp(urlRe, 'i');
   // Normalise the input — collapse `\/` to `/` so a single set of patterns matches both forms.
   const normalized = body.replace(/\\\//g, '/');
-  const domain = domainRe.source.replace(/^\^|\$$/g, '');
-  // Direct URL matching the target domain (any path)
-  const directRe = new RegExp(`https:\\/\\/${domain}\\/[^\\s"'<>\\\\]+`, 'i');
+  // Direct URL matching the supplied pattern (URL prefix + path-ish characters after)
+  const prefix = urlRe.source.replace(/^\^|\$$/g, '');
+  const directRe = new RegExp(`https:\\/\\/[^\\s"'<>\\\\]*?${prefix}[^\\s"'<>\\\\]*`, urlRe.flags || 'i');
   const direct = normalized.match(directRe);
   if (direct) return unwrapAwsTrack(direct[0]);
-  // AWS SES wrapper containing the target domain URL-encoded
-  // Encode `:`, `/`, `.` segment-by-segment so we can match `https%3A%2F%2F<dotsAsLiterals>`
-  const encDomain = domain.replace(/\\\./g, '.').replace(/\./g, '\\.');
-  const wrappedRe = new RegExp(`https:\\/\\/[^\\s"'<>]*awstrack\\.me\\/L0\\/https(?::|%3A)(?://|%2F%2F)${encDomain}[^\\s"'<>]+`, 'i');
+  // AWS SES wrapper containing the target URL URL-encoded
+  const encPrefix = prefix.replace(/\\\./g, '.').replace(/\./g, '\\.').replace(/\\\//g, '/').replace(/\//g, '%2F');
+  const wrappedRe = new RegExp(`https:\\/\\/[^\\s"'<>]*awstrack\\.me\\/L0\\/https(?::|%3A)(?://|%2F%2F)[^\\s"'<>]*?${encPrefix}[^\\s"'<>]+`, 'i');
   const wrapped = normalized.match(wrappedRe);
   if (wrapped) return unwrapAwsTrack(wrapped[0]);
   return null;
