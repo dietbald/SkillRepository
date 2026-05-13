@@ -164,8 +164,13 @@ The Stripe Card Element lives in iframe with `name^="__privateStripeFrame"` — 
 | `practice.add` | Create a new practice — payload includes `info.{contact, name, address, companyNumber, bankAccount, info}` |
 | `practice.subscriptions.payment.change` | Change payment method on a subscription. Params: `{subscriptionId, method, sourceId}`. Currently silently failing. |
 | `treatments.add` | Create a treatment for a patient. Params: `{hasInitialBilan, name, type, patientFileId}`. Returns `treatmentId`. Auto-creates `bilans[0]` with `type: "initial"`. |
+| `treatments.edit` | Edit a treatment. Params: `{ treatment: {...full doc} }` — **must pass the entire treatment object**, not patch. `treatments.update` does NOT exist (404). |
+| `treatments.bilans.add` | Add a new bilan to a treatment. Params: `{ treatmentId, type }` where `type ∈ {initial, evolution, relapse, extension}`. Returns new bilan `_id`. |
+| `treatments.bilans.edit` | Edit a bilan. Params: `{ bilan: {...}, treatmentId }`. Auto-fires on page-load with current bilan state. |
+| `treatments.bilans.remove` | Delete a bilan. |
 | `treatment.can.be.removed` | Pre-flight check before allowing treatment delete. |
 | `treatments.updateHalingoSessionCount` | Recompute session counter for a treatment. |
+| `pdf.generate` | Generic HTML→PDF. Params: `{ html: String, options: Object }`. Returns base64 PDF string. **No `type` enum** — passing `{type:'bilan'}` returns `validation-error: type is not allowed by the schema`. Client renders the demand-form HTML in browser and calls this. |
 | `events.create` | Create an appointment. Params: `{title, patientFileId, treatmentId, userId, start, end, type, meta:{type, subType, location}}`. Returns eventId. Auto-creates a commission invoice (event document gets `commissionInvoiceId` populated). |
 | `patientFiles.view` | Fetch patient details for the agenda autocomplete. |
 | `patientFiles.get` | Fetch full patient docs by id list. |
@@ -852,3 +857,124 @@ For fresh test accounts using Mailinator, poll the public API: `https://api.mail
 - **Practice settings store shape** (#358): `settings.invoices = {locale, template, type: 'member', mail: {template}}`, `settings.patientFiles.notifications = {date: 7, sessions: 10}`. Sjabloon factuur tile-click does not persist via DDP — needs explicit save.
 - **Schema additions** (#360): `practiceUsers = {userId, practiceId, role: 'owner'|'member', commission: {type: 'none'|...}}`. `subscriptions = {practiceId, trialEnd, start, periodStart/End, activeUntil, type: 'BASIC', paymentInfo: {type: 'none', repeatedAt: 'monthly'}}` — 30-day trial.
 - **Drag-resize/move events** — confirmed wired (`rbc-addons-dnd`) but Puppeteer CDP errors out on the multi-step mouse-move during DnD. Defer to manual verification or Playwright.
+
+## Session 4 addenda (2026-05-13) — bilan area full sweep
+
+### Bilan-print Aanvraagformulier voor terugbetaling
+
+The "print bilan" feature is the **RIZIV demand form** rendered from bilan + treatment + patient data. The gesture is non-obvious — there is no "Print" button on the bilan card.
+
+```js
+// 1. Tall viewport, the inner Documenten section lives ~y=1300+
+await page.setViewport({ width: 1920, height: 2400, deviceScaleFactor: 1 });
+await page.goto(`https://dev.app.halingo.be/patients/${PID}?tabIndex=1`);
+
+// 2. Expand all Klap-open accordions on the treatment card
+for (let i = 0; i < 4; i++) {
+  const n = await page.evaluate(() => {
+    const k = [...document.querySelectorAll('[title="Klap open"]')].filter(e => e.offsetParent);
+    k.forEach(o => o.querySelector('button')?.click());
+    return k.length;
+  });
+  if (n === 0) break;
+  await sleep(2500);
+}
+
+// 3. Find the 40×34 FAB BELOW the inner <h6>Documenten heading
+//    Must be the <h6>, NOT the <span> tab label that also says "Documenten"
+const fab = await page.evaluate(() => {
+  const h6 = [...document.querySelectorAll('h6')].find(e => e.offsetParent && (e.innerText||'').trim() === 'Documenten');
+  h6.scrollIntoView({ block: 'center' });
+  const hr = h6.getBoundingClientRect();
+  const c = [...document.querySelectorAll('button')].filter(b => b.offsetParent)
+    .map(b => ({ el: b, r: b.getBoundingClientRect() }))
+    .filter(x => x.r.width === 40 && x.r.height === 34 && x.r.x > 1000 && x.r.y > hr.y && x.r.y < hr.y + 800)
+    .sort((a, b) => a.r.y - b.r.y)[0];
+  return c && { x: Math.round(c.r.x + c.r.width/2), y: Math.round(c.r.y + c.r.height/2) };
+});
+await sleep(800);
+// Re-measure after scroll (coords shift)
+const fab2 = await page.evaluate(/* same locator */);
+await page.mouse.click(fab2.x, fab2.y);
+
+// 4. Click FORMULIEREN tab (the 3rd tab — only present when opened from this FAB)
+await page.evaluate(() => {
+  [...document.querySelectorAll('[role=tab],.MuiTab-root')]
+    .find(e => e.offsetParent && /^FORMULIEREN$/i.test((e.innerText||'').trim()))?.click();
+});
+
+// 5. Click "Datum vanaf" input + type date via keyboard (React-controlled)
+await page.mouse.click(dateX, dateY);
+await page.keyboard.type('01/01/2026', { delay: 60 });
+await page.keyboard.press('Tab');
+
+// 6. Default radio "Aanvraagformulier voor terugbetaling" (first-demand) is selected.
+//    For extension: click the "Kennisgeving van verlenging" radio.
+//    Optional: toggle "Beroepsgegevens automatisch invullen" (auto-fill prescriber data).
+
+// 7. Click UPLOAD (NOT MAAK — i18n key reuse, the FORMULIEREN-tab submit button reads "UPLOAD")
+await page.evaluate(() => {
+  [...document.querySelectorAll('button')]
+    .find(e => e.offsetParent && /^UPLOAD$/i.test((e.innerText||'').trim()) && e.getAttribute('role') !== 'tab')
+    ?.click();
+});
+```
+
+**Why the Formulieren tab is gated:** The 3rd tab is rendered on `enableDemandForm` prop. That prop is hardcoded `true` only when the modal is opened from the treatment's inner Documenten card; the patient-level DOCUMENTEN tab's "NIEUW DOCUMENT" button opens the same modal with `enableDemandForm` undefined, so the Formulieren tab is hidden.
+
+**Where the PDF goes:**
+- Persists to `documents` collection (NOT `patientFileReports`)
+- Direct URL pattern: `https://dev.app.halingo.be/files/documents/<docId>/original/<docId>.pdf`
+- Shown in BOTH treatment Documenten section AND patient DOCUMENTEN tab as `Aanvraagformulier voor terugbetaling DD/MM/YYYY.pdf`
+- Capture: click the doc tile → URL becomes `/patients/<pid>/treatments/documents/<docId>` → grab the visible `<iframe>` src → `fetch(src, {credentials:'include'})` → save bytes
+
+### Bilan fields persist via blur auto-save
+
+All bilan fields on the card auto-save on blur (no Opslaan button):
+- `RIZIV-nr` → `bilan.prescriber.riziv`
+- `Datum van voorschrift` → `bilan.prescriptionDate`
+- `Periode van behandeling` (start) → `bilan.start`
+- `Datum van goedkeuring` → `bilan.approvedDate`
+- `Bilan terugbetaald` toggle (`.icheckbox_square-green`) → `bilan.isReimbursed`
+
+The "tot" (end-date) input shares the row with the start input and has no unique label. Use positional targeting (the 2nd input in the same wrapper) instead of label-walk.
+
+### approvalState UI dropdown — 3 of 4 enum values
+
+Click the TESTING / GOEDGEKEURD / GEWEIGERD button on the treatment card → `<li>` dropdown with Dutch labels:
+
+| UI label | Enum value |
+|---|---|
+| Goedgekeurd | `approved` |
+| Geweigerd | `declined` |
+| Testing | `testing` |
+| — (server-only) | `pending` |
+
+PENDING is not exposed in the dropdown. To set `pending`, you'd need a server-side flip.
+
+### DUPLICAAT belongs to invoice cert, not bilan
+
+The "Dit getuigschrift is al geprint. Nog eens printen zal resulteren in een duplicaat" warning (i18n key `patient.invoice.certificate.print.duplicate.text`) is in the **invoice certificate print modal**, gated by `certificate.numbers.length > 0`. Bilan demand-form reprinting creates a second file silently with no warning.
+
+### Session-expiry recovery
+
+Halingo's session token can lapse between scripts. Detect via body text and re-login via DDP without a UI flow:
+
+```js
+const loggedOut = await page.evaluate(() => /AANMELDEN/.test(document.body.innerText.slice(0, 200)));
+if (loggedOut) {
+  await page.evaluate((e, p) => new Promise(r =>
+    window.Meteor.loginWithPassword(e, p, x => r(x ? 'err' : 'ok'))
+  ), creds.email, creds.password);
+  await page.goto(originalUrl, { waitUntil: 'domcontentloaded' });
+  await sleep(12000);
+}
+```
+
+### Disambiguating "Documenten" on the patient page
+
+Two elements have the text `Documenten`:
+- `<span>` at y~280 — the **tab label** in the patient tab strip (DOCUMENTEN). Opens the patient documents tab.
+- `<h6>` at y~1300+ — the **inner section heading** inside the treatment card. Owns the 40×34 add FAB that opens the modal with the Formulieren tab.
+
+Filter on `tagName === 'H6'` when looking for the inner section.

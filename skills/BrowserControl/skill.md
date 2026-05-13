@@ -1481,6 +1481,56 @@ await sleep(1500);
 // NOW getBoundingClientRect() returns viewport-relative coords that mouse.click can hit
 ```
 
+### Set a tall viewport before working with long pages
+
+Why: `page.mouse.click(x, y)` only hits pixels inside the rendered viewport. Even after `scrollIntoView`, if the page is taller than the viewport some targets stay off-screen because their container can't scroll them up enough. Setting a tall viewport sidesteps the entire problem — every fold becomes visible.
+
+```js
+await page.setViewport({ width: 1920, height: 2400, deviceScaleFactor: 1 });
+// For pages with many accordions/cards expanded, go to 3200+
+```
+
+Pair with `scrollIntoView` — the viewport gives you headroom; the scroll positions the target in the middle of that headroom.
+
+### Re-measure after every DOM-mutating action
+
+Why: appending a card / opening a modal / expanding an accordion changes the y of EVERY element below it. A `y > h6.y && y < h6.y + 300` filter that worked at first run will return nothing on the second once a sibling card pushes the layout down. Either:
+1. Loosen the upper bound generously (`hr.y + 800` or more), or
+2. Re-run the locator after any expand/add/delete, never cache coords across DOM mutations.
+
+```js
+// ❌ stale coords after page.reload()
+const fab = await locate();
+await page.reload();
+await page.mouse.click(fab.x, fab.y);   // misses
+
+// ✅ re-measure
+const fab = await locate();
+fab && fab.el.scrollIntoView({ block: 'center' });
+await sleep(800);
+const fab2 = await locate();           // y refreshed post-scroll
+await page.mouse.click(fab2.x, fab2.y);
+```
+
+### React-controlled inputs: type via keyboard, not via value setter
+
+Why: setting `input.value = ...` + dispatching `input`/`change` events bypasses React's synthetic event system on controlled inputs that use `onChange`-driven state. The displayed value updates, but the committed React state does not, so the submit button stays disabled / the typed value gets reverted on blur. Native `page.keyboard.type` fires real keydown/keyup/input events that React picks up.
+
+```js
+// ❌ Doesn't commit to React state on many MUI/react-select inputs
+const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), 'value').set;
+setter.call(input, '01/01/2026');
+input.dispatchEvent(new Event('input', { bubbles: true }));
+
+// ✅ Click to focus, type via keyboard, Tab to blur+commit
+await page.mouse.click(inputX, inputY);
+await sleep(300);
+await page.keyboard.type('01/01/2026', { delay: 60 });
+await page.keyboard.press('Tab');
+```
+
+The value-setter trick still works for plain `<input>` elements that don't go through React's controlled-input wrapper.
+
 ### SPA "route not found" returns HTTP 200 with an error string in the body
 
 Single-page apps with client-side routing usually do NOT return HTTP 404 for unknown paths — the server returns the HTML shell with status 200, and the router renders an error message in the page body. Don't rely on `response.status()` to detect missing routes.
