@@ -1,0 +1,22 @@
+{
+  "name": "dti-bnrs-lookup",
+  "version": "1.0.0",
+  "description": "Standalone DTI Business Name Registration System (BNRS) search for Philippine sole proprietorships. Single + batch CSV lookup with 2Captcha-powered captcha solving.",
+  "type": "module",
+  "main": "src/lookup.js",
+  "bin": {
+    "dti-bnrs-lookup": "src/lookup.js"
+  },
+  "scripts": {
+    "lookup": "node src/lookup.js"
+  },
+  "dependencies": {
+    "puppeteer": "^23.0.0",
+    "csv-parse": "^5.5.0",
+    "csv-stringify": "^6.5.0",
+    "minimist": "^1.2.8"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
